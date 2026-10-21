@@ -1,0 +1,14 @@
+# Normalize line endings in the repository; check out with the platform's native endings.
+* text=auto
+
+# Binary resources
+*.png binary
+*.ico binary
+*.jar binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+
+# The i18n catalogs stay LF in the working tree: consumers compare generated output byte for byte.
+jdesk-framework-frame/src/main/resources/jdesk/i18n/** text eol=lf

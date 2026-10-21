@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bundled-plugins>
+    <plugin id="com.jdesk.demo.greeter" path="demo-greeter.jar"/>
+</bundled-plugins>

@@ -1,0 +1,9 @@
+[
+  { "input": "Save", "expected": "[Šáṽé ~~]" },
+  { "input": "OK", "expected": "[ÖĶ ~]" },
+  { "input": "100%", "expected": "[100%]" },
+  { "input": "{count} item | {count} items", "expected": "[{count} íţéɱ ~~] | [{count} íţéɱš ~~]" },
+  { "input": "support{'@'}example.com", "expected": "[šûþþöŕţ{'@'}éẋáɱþļé.çöɱ ~~~~~~~]" },
+  { "input": "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ", "expected": "[áƀçðéƒĝĥíĵķļɱñöþǫŕšţûṽŵẋýž ÅƁÇÐÉƑĜĤÎĴĶĻṀÑÖÞǪŔŠŢÛṼŴẊÝŽ ~~~~~~~~~~~~~~~~~~~~~]" },
+  { "input": " Save ", "expected": "[ Šáṽé  ~~]" }
+]

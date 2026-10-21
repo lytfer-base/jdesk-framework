@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    JDesk Frame — Swing application framework declarations.
+
+    Core services are registered by ApplicationCore in code. This descriptor is
+    reserved for frame-level services and extension points that ordinary Swing
+    applications reuse directly.
+-->
+<frame-plugins>
+    <extensionPoints>
+        <extensionPoint name="deskframe.applicationActivity"
+                        interface="com.jdesk.frame.boot.ApplicationActivity"/>
+        <extensionPoint name="deskframe.postStartupActivity"
+                        interface="com.jdesk.frame.boot.PostStartupActivity"/>
+    </extensionPoints>
+
+    <extensions>
+        <applicationService serviceInterface="com.jdesk.frame.action.ActionManager"
+                            serviceImplementation="com.jdesk.frame.action.ActionManager"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.settings.SettingsManager"
+                            serviceImplementation="com.jdesk.frame.settings.SettingsManager"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.laf.JdfLafManager"
+                            serviceImplementation="com.jdesk.frame.laf.JdfLafManager"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.icon.JdfIconManager"
+                            serviceImplementation="com.jdesk.frame.icon.JdfIconManager"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.swing.SwingUiDispatcher"
+                            serviceImplementation="com.jdesk.frame.swing.SwingUiDispatcher"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.storage.DatabaseService"
+                            serviceImplementation="com.jdesk.frame.storage.sqlite.SqliteDatabaseService"/>
+
+        <applicationService serviceInterface="com.jdesk.core.vfs.ManagedVfsService"
+                            serviceImplementation="com.jdesk.frame.vfs.DefaultManagedVfsService"/>
+
+        <applicationService serviceInterface="com.jdesk.core.history.LocalHistoryService"
+                            serviceImplementation="com.jdesk.frame.history.DefaultLocalHistoryService"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.state.WindowStateService"
+                            serviceImplementation="com.jdesk.frame.state.WindowStateService"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.window.JdfWindowWatcher"
+                            serviceImplementation="com.jdesk.frame.window.JdfWindowWatcher"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.webview.WebViewService"
+                            serviceImplementation="com.jdesk.frame.webview.ConfigurableWebViewService"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.webview.resource.WebResourceSchemeRegistry"
+                            serviceImplementation="com.jdesk.frame.webview.resource.WebResourceSchemeRegistry"/>
+
+        <applicationService serviceInterface="com.jdesk.frame.webview.bridge.WebBridgeService"
+                            serviceImplementation="com.jdesk.frame.webview.bridge.impl.WebBridgeServiceImpl"/>
+
+        <extension point="deskframe.postStartupActivity"
+                   implementation="com.jdesk.frame.webview.WebViewWarmupActivity"/>
+    </extensions>
+</frame-plugins>

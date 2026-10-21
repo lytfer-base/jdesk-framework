@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.jdesk</groupId>
+        <artifactId>jdesk-framework</artifactId>
+        <version>0.1.0</version>
+    </parent>
+
+    <artifactId>jdesk-jcef-api</artifactId>
+    <name>JDesk JCEF API</name>
+    <description>Compile-time org.cef types extracted from the building JBR; the runtime always uses JBR's own jcef module</description>
+
+    <!--
+        No sources: extracts the org.cef classes from ${java.home}/jmods/jcef.jmod at build time so that frame's JCEF
+        backend compiles (with <release>17</release>, javac can't see JBR's private jcef module).
+        Dependents must use provided scope: at run time JBR's own jcef module always wins.
+        JAVA_HOME must be a JetBrains Runtime with JCEF; otherwise the build stops here with an explanation.
+    -->
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>${maven-antrun-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>extract-org-cef</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <fail message="Building the JCEF backend requires a JetBrains Runtime with JCEF, but ${java.home} has no jmods/jcef.jmod. Point JAVA_HOME to a jbrsdk_jcef build.">
+                                    <condition>
+                                        <not>
+                                            <available file="${java.home}/jmods/jcef.jmod"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                                <delete dir="${project.build.directory}/jcef-jmod"/>
+                                <exec executable="${java.home}/bin/jmod" failonerror="true">
+                                    <arg value="extract"/>
+                                    <arg value="--dir"/>
+                                    <arg value="${project.build.directory}/jcef-jmod"/>
+                                    <arg value="${java.home}/jmods/jcef.jmod"/>
+                                </exec>
+                                <copy todir="${project.build.outputDirectory}">
+                                    <fileset dir="${project.build.directory}/jcef-jmod/classes"
+                                             includes="org/cef/**/*.class"/>
+                                </copy>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

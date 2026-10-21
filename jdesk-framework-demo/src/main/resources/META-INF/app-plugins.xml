@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    JDesk Demo: application-level extension points, used by the demo itself and by its plugins.
+    The frame layer's ApplicationConfigLoader reads this file from the application class loader during
+    JdeskApplication.init(); it must stay at META-INF/app-plugins.xml.
+-->
+<app-plugins>
+    <extensionPoints>
+        <!-- Greeting extension point: implement GreetingProvider to return a greeting string. -->
+        <extensionPoint name="deskframe.demo.greeting"
+                        interface="com.jdesk.demo.GreetingProvider"/>
+
+        <!-- Tool window extension point: implement ToolWindowProvider to return a JComponent. -->
+        <extensionPoint name="deskframe.demo.toolWindow"
+                        interface="com.jdesk.demo.ToolWindowProvider"/>
+    </extensionPoints>
+
+    <!-- Built-in implementations the demo registers for its own extension points. -->
+    <extensions>
+        <extension point="deskframe.demo.greeting"
+                   implementation="com.jdesk.demo.builtin.SystemInfoGreetingProvider"/>
+
+        <extension point="deskframe.demo.greeting"
+                   implementation="com.jdesk.demo.builtin.JavaInfoGreetingProvider"/>
+    </extensions>
+</app-plugins>

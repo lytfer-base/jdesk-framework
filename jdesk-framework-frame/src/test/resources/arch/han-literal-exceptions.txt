@@ -1,0 +1,2 @@
+# path<TAB>count<TAB>reason: deliberate CJK text outside comments in framework main code.
+src/main/java/com/jdesk/frame/ui/scale/JdfFonts.java	1	The character is a glyph probe that checks whether a font can display Han characters; it is not UI text.

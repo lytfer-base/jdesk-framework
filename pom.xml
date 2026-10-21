@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.jdesk</groupId>
+    <artifactId>jdesk-framework</artifactId>
+    <version>0.1.0</version>
+    <packaging>pom</packaging>
+
+    <name>JDesk Framework</name>
+    <description>A general-purpose desktop application framework inspired by IntelliJ Platform concepts</description>
+    <url>https://github.com/lytfer-base/jdesk-framework</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>biconggang</id>
+            <name>Bi Conggang</name>
+        </developer>
+    </developers>
+
+    <scm>
+        <url>https://github.com/lytfer-base/jdesk-framework</url>
+        <connection>scm:git:https://github.com/lytfer-base/jdesk-framework.git</connection>
+        <developerConnection>scm:git:https://github.com/lytfer-base/jdesk-framework.git</developerConnection>
+    </scm>
+
+    <modules>
+        <module>jdesk-framework-core</module>
+        <module>jdesk-jcef-api</module>
+        <module>jdesk-framework-frame</module>
+        <module>jdesk-framework-demo</module>
+        <module>jdesk-framework-demo/demo-greeter</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <java.version>17</java.version>
+        <junit.version>5.10.1</junit.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.5</maven-surefire-plugin.version>
+        <maven-antrun-plugin.version>3.1.0</maven-antrun-plugin.version>
+
+        <kotlin.version>2.2.21</kotlin.version>
+        <kotlin.code.style>official</kotlin.code.style>
+        <kotlin.compiler.jvmTarget>17</kotlin.compiler.jvmTarget>
+
+        <sqlite-jdbc.version>3.53.1.0</sqlite-jdbc.version>
+        <jna.version>5.12.1</jna.version>
+        <!-- One version for the whole Jackson family, distributed through jackson-bom. -->
+        <jackson.version>2.18.3</jackson.version>
+        <mcp-sdk.version>2.0.0</mcp-sdk.version>
+        <!-- The MCP Streamable HTTP transport is a servlet; ee11 matches the SDK's servlet-api 6.1. -->
+        <jetty.version>12.1.12</jetty.version>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>IntelliJ.deps</id>
+            <url>https://packages.jetbrains.team/maven/p/ij/intellij-dependencies</url>
+        </repository>
+        <repository>
+            <id>IntelliJ.plugin.deps</id>
+            <url>https://cache-redirector.jetbrains.com/maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-ide-plugin-dependencies</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-reflect</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains.kotlinx</groupId>
+                <artifactId>kotlinx-coroutines-core-jvm</artifactId>
+                <version>1.10.2</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains.kotlinx</groupId>
+                <artifactId>kotlinx-coroutines-swing</artifactId>
+                <version>1.10.2</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.jetbrains</groupId>
+                <artifactId>jbr-api</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+
+            <!-- Don't pin a Jackson artifact's version in a module; mixing versions breaks the family. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>2.0.16</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite-jdbc.version}</version>
+            </dependency>
+
+            <!-- jna and jna-platform must share one version; 5.12.1 matches directory-watcher 0.18.0, so re-check it when upgrading that. -->
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna-platform</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-core</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-json-jackson2</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.eclipse.jetty.ee11</groupId>
+                <artifactId>jetty-ee11-servlet</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-maven-plugin</artifactId>
+                <version>${kotlin.version}</version>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <phase>process-sources</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <sourceDir>${project.basedir}/src/main/java</sourceDir>
+                            </sourceDirs>
+                            <nowarn>true</nowarn>
+                            <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+                            <apiVersion>2.0</apiVersion>
+                            <languageVersion>2.0</languageVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <phase>process-test-sources</phase>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <sourceDir>${project.basedir}/src/test/java</sourceDir>
+                            </sourceDirs>
+                            <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+                            <apiVersion>2.0</apiVersion>
+                            <languageVersion>2.0</languageVersion>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>java-compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>java-test-compile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <!-- Tests run in Simplified Chinese so that a locale.properties in the dev home or the OS language can't change assertions. -->
+                    <systemPropertyVariables>
+                        <jdesk.locale>zh-CN</jdesk.locale>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

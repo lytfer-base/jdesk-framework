@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<deskframe-plugin>
+    <id>com.jdesk.demo.greeter</id>
+    <name>Demo Greeter Plugin</name>
+    <version>1.0.0</version>
+    <description>Demo plugin that contributes greetings AND an application service.</description>
+    <vendor email="dev@deskframe.local">JDesk Team</vendor>
+
+    <depends>com.jdesk.core</depends>
+
+    <extensionPoints>
+        <extensionPoint name="demo-greeter.customGreeting"
+                        interface="com.jdesk.demo.GreetingProvider"/>
+    </extensionPoints>
+
+    <extensions>
+        <extension point="deskframe.demo.greeting"
+                   implementation="com.jdesk.demo.plugin.DemoGreeterExtension"/>
+
+        <applicationService serviceInterface="com.jdesk.demo.plugin.PluginGreeterService"
+                            serviceImplementation="com.jdesk.demo.plugin.PluginGreeterServiceImpl"/>
+    </extensions>
+</deskframe-plugin>

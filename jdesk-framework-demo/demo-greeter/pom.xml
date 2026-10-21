@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.jdesk</groupId>
+        <artifactId>jdesk-framework</artifactId>
+        <version>0.1.0</version>
+        <!-- This module is nested two levels deep, so the default ../pom.xml would resolve to the wrong parent. -->
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>demo-greeter</artifactId>
+    <name>Demo Greeter Plugin</name>
+    <description>Demo plugin packaged as a single JAR with META-INF/plugin.xml</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.jdesk</groupId>
+            <artifactId>jdesk-framework-demo</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Installs the plugin into the demo's development home, where .root/demo-app/plugins/bundled-plugins.xml expects it. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>${maven-antrun-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>install-into-demo-home</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                      tofile="${project.basedir}/../../.root/demo-app/plugins/demo-greeter.jar"
+                                      overwrite="true"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

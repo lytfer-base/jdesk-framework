@@ -1,0 +1,16 @@
+[
+  { "pattern": "保存", "params": {}, "expected": "保存" },
+  { "pattern": "已归档 {count} 条", "params": { "count": 3 }, "expected": "已归档 3 条" },
+  { "pattern": "{name} 的项目", "params": { "name": "MyApp" }, "expected": "MyApp 的项目" },
+  { "pattern": "{a}{b}", "params": { "a": "x", "b": "y" }, "expected": "xy" },
+  { "pattern": "{count} item | {count} items", "params": { "count": 1 }, "expected": "1 item" },
+  { "pattern": "{count} item | {count} items", "params": { "count": 0 }, "expected": "0 items" },
+  { "pattern": "{count} item | {count} items", "params": { "count": 5 }, "expected": "5 items" },
+  { "pattern": "{count} item | {count} items", "params": { "count": 1.5 }, "expected": "1.5 items" },
+  { "pattern": "support{'@'}example.com", "params": {}, "expected": "support@example.com" },
+  { "pattern": "a {'|'} b", "params": {}, "expected": "a | b" },
+  { "pattern": "{'{'}name{'}'}", "params": {}, "expected": "{name}" },
+  { "pattern": "Don't stop", "params": {}, "expected": "Don't stop" },
+  { "pattern": "100%", "params": {}, "expected": "100%" },
+  { "pattern": "Open {file} in {app}", "params": { "file": "a.md", "app": "MyApp" }, "expected": "Open a.md in MyApp" }
+]

@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JDesk Framework 应用启动过程详解</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --paper: #ffffff;
+      --ink: #162033;
+      --muted: #5b6473;
+      --line: #d9e1ef;
+      --line-strong: #b8c5da;
+      --blue: #2563eb;
+      --blue-soft: #eaf1ff;
+      --green: #0f766e;
+      --green-soft: #e7f7f4;
+      --amber: #b45309;
+      --amber-soft: #fff4db;
+      --red: #b42318;
+      --red-soft: #fff0ed;
+      --violet: #6d28d9;
+      --violet-soft: #f2edff;
+      --shadow: 0 16px 45px rgba(35, 50, 85, 0.10);
+      --radius: 8px;
+      font-family: "Inter", "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.65;
+    }
+
+    main {
+      width: min(1500px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 36px 0 64px;
+    }
+
+    header {
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(30px, 4vw, 46px);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 30px 0 14px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    p {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #edf2f7;
+      color: #1b2537;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .subtitle {
+      max-width: 1050px;
+      font-size: 16px;
+    }
+
+    .notice {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 14px 16px;
+      margin: 18px 0 26px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: 0 6px 20px rgba(35, 50, 85, 0.06);
+    }
+
+    .notice strong {
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .diagram-card,
+    .section-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .diagram-card {
+      overflow: auto;
+      padding: 22px;
+    }
+
+    .diagram-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+      min-width: 1040px;
+    }
+
+    .diagram-title p {
+      margin: 4px 0 0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      min-width: 330px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .dot.green {
+      background: var(--green);
+    }
+
+    .dot.amber {
+      background: var(--amber);
+    }
+
+    .dot.violet {
+      background: var(--violet);
+    }
+
+    .dot.red {
+      background: var(--red);
+    }
+
+    .flow-map {
+      min-width: 1240px;
+    }
+
+    .top-flow {
+      display: grid;
+      grid-template-columns: 1fr 34px 1.25fr 34px 1fr;
+      align-items: stretch;
+      gap: 0;
+      margin-bottom: 18px;
+    }
+
+    .flow-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--line-strong);
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .node {
+      min-height: 72px;
+      padding: 12px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfdff;
+    }
+
+    .node strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .node span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .node.primary {
+      border-color: #9eb8f6;
+      background: var(--blue-soft);
+    }
+
+    .node.green {
+      border-color: #a8d7d0;
+      background: var(--green-soft);
+    }
+
+    .node.amber {
+      border-color: #e4c579;
+      background: var(--amber-soft);
+    }
+
+    .node.violet {
+      border-color: #c6b2f7;
+      background: var(--violet-soft);
+    }
+
+    .node.red {
+      border-color: #f0b1a9;
+      background: var(--red-soft);
+    }
+
+    .lanes {
+      display: grid;
+      grid-template-columns: 1.05fr 1.5fr 1.16fr 0.96fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .lane {
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f9fbff;
+    }
+
+    .lane h3 {
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .lane .step {
+      position: relative;
+      padding: 10px 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .lane .step:not(:last-child)::after {
+      content: "↓";
+      position: absolute;
+      left: 50%;
+      bottom: -20px;
+      transform: translateX(-50%);
+      color: var(--line-strong);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .step span,
+    .step li {
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+
+    .step ul {
+      margin: 5px 0 0;
+      padding-left: 16px;
+    }
+
+    .parallel {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .parallel .mini {
+      padding: 8px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: #ffffff;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .join {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .section-card {
+      padding: 18px;
+    }
+
+    .section-card ul,
+    .section-card ol {
+      margin: 8px 0 0;
+      padding-left: 22px;
+      color: var(--muted);
+    }
+
+    .section-card li {
+      margin: 4px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    th,
+    td {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f5fa;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        width: min(100vw - 24px, 1500px);
+        padding-top: 24px;
+      }
+
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      main {
+        width: 100%;
+        padding: 0;
+      }
+
+      .diagram-card,
+      .section-card,
+      .notice {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+<p style="margin:16px;padding:12px;border:1px solid #cbd5e1">历史可视化快照：当前启动机制请查阅 <a href="application-startup-process.md">Markdown 文档</a>；本页不独立维护实现事实。</p>
+<main>
+  <header>
+    <h1>应用启动过程详解</h1>
+    <p class="subtitle">
+      这份 HTML 是 <code>application-startup-process.md</code> 的可视化版本。总图不依赖 IDEA 的 Mermaid
+      Markdown 预览能力，直接用 HTML 和 CSS 绘制，适合在浏览器或 IDEA 内置 HTML 预览中查看。
+    </p>
+  </header>
+
+  <div class="notice">
+    <strong>阅读建议</strong>
+    <p>
+      先看完整流程图，把启动链路分成构造、初始化、确定性注册、运行态启动、UI 活动和失败回滚几段；再看下面的阶段说明。
+      Markdown 源文档仍保留，便于后续维护文本和源码引用。
+    </p>
+  </div>
+
+  <section class="diagram-card" aria-label="完整启动流程图">
+    <div class="diagram-title">
+      <div>
+        <h2>完整流程图</h2>
+        <p>一个图中包含 builder 路径、直接启动路径、并行解析、确定性注册和失败回滚。</p>
+      </div>
+      <div class="legend" aria-label="图例">
+        <span class="tag"><span class="dot"></span>入口/构造</span>
+        <span class="tag"><span class="dot green"></span>初始化</span>
+        <span class="tag"><span class="dot amber"></span>UI/Activity</span>
+        <span class="tag"><span class="dot violet"></span>插件/容器</span>
+        <span class="tag"><span class="dot red"></span>失败回滚</span>
+      </div>
+    </div>
+
+    <div class="flow-map">
+      <div class="top-flow">
+        <div class="node primary">
+          <strong>入口</strong>
+          <span><code>JdeskApplicationBuilder.launchBlocking()</code></span>
+          <span>或直接 <code>JdeskApplication.init()</code> / <code>start()</code></span>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="node primary">
+          <strong>创建 JdeskApplication</strong>
+          <span>校验 applicationClassLoader，读取 <code>application.properties</code></span>
+          <span>创建 <code>StartupTrace</code>、<code>ApplicationTaskScope</code>、<code>ApplicationCore</code></span>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="node primary">
+          <strong>选择启动路径</strong>
+          <span>builder 路径会创建 frame UI 并运行 Activity</span>
+          <span>直接路径只处理应用基础设施和插件运行态</span>
+        </div>
+      </div>
+
+      <div class="lanes">
+        <section class="lane">
+          <h3>Builder frame 编排</h3>
+          <div class="step amber">
+            <strong><code>frame.scale.installEarly</code></strong>
+            <span>提前安装 UI 缩放，避免 Swing 控件创建后再补 scale。</span>
+          </div>
+          <div class="step amber">
+            <strong><code>frame.launch.parallel</code></strong>
+            <span>Look &amp; Feel 在 EDT 异步执行，应用初始化在当前 coroutine 执行。</span>
+            <ul>
+              <li><code>frame.lookAndFeel.ensure</code></li>
+              <li><code>application.initAsync()</code></li>
+              <li>init 完成后安装默认 <code>ComponentStore</code></li>
+            </ul>
+          </div>
+          <div class="step amber">
+            <strong>主题和窗口上下文</strong>
+            <span>等待 Look &amp; Feel，EDT 上应用主题，解析标题，创建 <code>MainFrame</code> 和 <code>ApplicationContext</code>。</span>
+          </div>
+          <div class="step amber">
+            <strong>关键 UI 活动</strong>
+            <span>插件启动后、进入 RUNNING 前，在 EDT 执行扩展和 builder 声明的 <code>ApplicationActivity</code>。</span>
+          </div>
+          <div class="step amber">
+            <strong>首窗显示和后启动活动</strong>
+            <span>显示 <code>MainFrame</code>，记录 first window visible，再异步投递 <code>PostStartupActivity</code>。</span>
+          </div>
+        </section>
+
+        <section class="lane">
+          <h3>application.initAsync()</h3>
+          <div class="step green">
+            <strong>进入初始化态</strong>
+            <span>状态检查 <code>NOT_INITIALIZED</code>，注册到 <code>ApplicationManager</code>，切换 <code>INITIALIZING</code>。</span>
+            <span>发布 <code>beforeApplicationLoaded</code>，解析插件目录，安装 frame parent-first 包规则。</span>
+          </div>
+          <div class="step green">
+            <strong><code>core.initializeCoreServices()</code></strong>
+            <span>注册 core 扩展点和核心服务，加载 <code>ApplicationInfo</code>，配置 VFS 和 <code>LocalFileSystem</code>。</span>
+          </div>
+          <div class="step green">
+            <strong>并行解析阶段</strong>
+            <span>只读取文件并构造模型，不修改 extension registry 或 service container。</span>
+            <div class="parallel">
+              <div class="mini"><code>plugins.load</code><br>发现插件路径，读取 bundled 注册表，并行解析 <code>plugin.xml</code></div>
+              <div class="mini"><code>frame.config.parse</code><br>读取 <code>META-INF/frame-plugins.xml</code> 为描述符模型</div>
+              <div class="mini"><code>application.config.parse</code><br>读取 <code>META-INF/app-plugins.xml</code> 为描述符模型</div>
+            </div>
+          </div>
+          <div class="join">三个解析任务完成后进入确定性注册</div>
+          <div class="step green">
+            <strong><code>configuration.apply</code></strong>
+            <span>按 core → frame → app 顺序注册运行时状态。</span>
+            <ul>
+              <li>frame：扩展点和 frame applicationService 描述符</li>
+              <li>app：扩展点、内置 lazy extension、applicationService 描述符</li>
+            </ul>
+          </div>
+          <div class="step violet">
+            <strong><code>core.initPlugins()</code></strong>
+            <span>按依赖拓扑顺序创建插件 classloader，注册插件声明的 extension point，插件状态变为 <code>LOADED</code>。</span>
+          </div>
+          <div class="step violet">
+            <strong><code>core.initializeContainers()</code></strong>
+            <span>初始化 extension registry 和 service container，预加载 <code>AWAIT</code> / <code>ASYNC</code> 服务。</span>
+          </div>
+          <div class="step green">
+            <strong><code>INITIALIZED</code></strong>
+            <span>发布 <code>applicationInitialized</code>，应用基础设施准备完成。</span>
+          </div>
+        </section>
+
+        <section class="lane">
+          <h3>运行态启动</h3>
+          <div class="step violet">
+            <strong><code>startRuntimeAsync()</code></strong>
+            <span>要求状态为 <code>INITIALIZED</code>，切换 <code>STARTING</code>，调用 <code>RuntimeParamRegistry.completeBoot()</code>。</span>
+          </div>
+          <div class="step violet">
+            <strong><code>core.startPlugins()</code></strong>
+            <span>在 <code>Dispatchers.Default</code> 执行，进入 <code>PluginManager.startPlugins()</code>。</span>
+          </div>
+          <div class="step violet">
+            <strong>插件贡献注册</strong>
+            <span>按依赖拓扑顺序注册插件 lazy extension 和 lazy applicationService 描述符，插件状态变为 <code>STARTED</code>。</span>
+          </div>
+          <div class="step green">
+            <strong><code>finishStartBeforeUiShown()</code></strong>
+            <span>发布 <code>beforeUiShown</code>，切换 <code>RUNNING</code>，发布 <code>onApplicationStarted</code>。</span>
+          </div>
+          <div class="step amber">
+            <strong>直接 start 路径</strong>
+            <span>直接路径到这里结束；builder 路径会在 <code>finishStartBeforeUiShown()</code> 前插入 <code>ApplicationActivity</code>，之后显示主窗口。</span>
+          </div>
+        </section>
+
+        <section class="lane">
+          <h3>失败和回滚</h3>
+          <div class="step red">
+            <strong>异常来源</strong>
+            <span>构造、初始化、frame launch、Activity 任一关键阶段抛出 <code>RuntimeException</code> 或 <code>Error</code>。</span>
+          </div>
+          <div class="step red">
+            <strong>清理全局状态</strong>
+            <span><code>initAsync()</code> 失败会先清理 <code>ApplicationManager</code>。</span>
+          </div>
+          <div class="step red">
+            <strong>builder 回滚</strong>
+            <span>输出或写入启动 trace，调用 <code>disposeAfterStartupFailure</code> 释放 task scope、message bus、core 和可能已创建的 main frame。</span>
+          </div>
+          <div class="step red">
+            <strong>可选退出</strong>
+            <span><code>exitOnStartupFailure=true</code> 时显示启动错误并使用固定退出码退出；否则重新抛出异常。</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <h2>阶段说明</h2>
+  <div class="detail-grid">
+    <section class="section-card">
+      <h3>1. 构造阶段</h3>
+      <p><code>JdeskApplication</code> 构造函数准备启动所需的基础对象，但不注册全局应用，也不进入初始化态。</p>
+      <ul>
+        <li>读取 <code>PathManager.getSystemDir()/application.properties</code>，写入 <code>RuntimeParamRegistry</code>。</li>
+        <li>创建 <code>StartupTrace</code> 和 application-owned <code>ApplicationTaskScope</code>。</li>
+        <li>创建 <code>ApplicationCore</code>，内部持有 <code>ExtensionRegistryImpl</code> 和 <code>ServiceContainerImpl</code>。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>2. Core 服务注册</h3>
+      <p><code>ApplicationCore.initializeCoreServices()</code> 是第一个运行时注册阶段，先于 frame、app 和 plugin。</p>
+      <ul>
+        <li>注册 core 扩展点 <code>applicationService</code>。</li>
+        <li>注册 <code>StartupTrace</code>、<code>ApplicationInfo</code>、<code>ExtensionRegistry</code> 实例服务。</li>
+        <li>注册懒加载服务 <code>MessageBusManager</code> 和 <code>PluginManager</code>。</li>
+        <li>配置 <code>VirtualFileManager</code>，注册 <code>LocalFileSystem</code> 协议。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>3. XML 和插件描述符解析</h3>
+      <p>启动链把 frame XML、app XML 和插件描述符拆成并行解析任务。</p>
+      <ul>
+        <li><code>FrameConfigLoader.parseFrameConfiguration()</code> 只生成 <code>XmlConfigurationDescriptor</code>。</li>
+        <li><code>ApplicationConfigLoader.parseApplicationConfiguration()</code> 只生成 <code>XmlConfigurationDescriptor</code>。</li>
+        <li><code>PluginManager.loadPlugins()</code> 发现插件，并行解析 <code>plugin.xml</code>，记录 <code>PluginDescriptor</code>。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>4. 确定性注册</h3>
+      <p>解析结果统一在 <code>configuration.apply</code> 应用，避免并发任务直接修改 registry/container。</p>
+      <ol>
+        <li>core 已完成基础注册。</li>
+        <li>frame 注册扩展点和 frame applicationService 描述符。</li>
+        <li>app 注册扩展点、应用内置 lazy extension 和 applicationService 描述符，并保留 XML preload 策略。</li>
+        <li>plugins 先注册插件声明的扩展点，再在运行态注册插件贡献。</li>
+      </ol>
+    </section>
+
+    <section class="section-card">
+      <h3>5. 插件初始化和启动</h3>
+      <p>插件生命周期被拆成 <code>loadPlugins()</code>、<code>initPlugins()</code> 和 <code>startPlugins()</code>。</p>
+      <ul>
+        <li><code>loadPlugins()</code> 只发现和解析描述符。</li>
+        <li><code>initPlugins()</code> 创建 classloader，注册插件声明的 extension point，插件状态变为 <code>LOADED</code>。</li>
+        <li><code>startPlugins()</code> 注册插件 lazy extension 和按类名创建的 service，并立即应用 preload 策略。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>6. 服务容器初始化</h3>
+      <p><code>ServiceContainer.initialize()</code> 只预加载显式要求的服务。</p>
+      <ul>
+        <li><code>ServicePreloadMode.AWAIT</code> 同步创建。</li>
+        <li><code>ServicePreloadMode.ASYNC</code> 使用应用任务域异步创建。</li>
+        <li>普通服务保持懒加载，首次 <code>getService()</code> 时创建。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>7. UI 和 Activity</h3>
+      <p>builder 路径负责 frame 层 UI 阶段，所有 Swing 操作都在 EDT 执行。</p>
+      <ul>
+        <li>Look &amp; Feel 可与应用初始化并行。</li>
+        <li>主题应用和 <code>MainFrame</code> 创建在 EDT 执行。</li>
+        <li><code>ApplicationActivity</code> 是首窗显示前的关键活动，失败会中断启动。</li>
+        <li><code>PostStartupActivity</code> 在首窗显示后异步投递，失败只记录日志。</li>
+      </ul>
+    </section>
+
+    <section class="section-card">
+      <h3>8. 失败回滚</h3>
+      <p>builder 路径会尽量输出启动 trace，并释放部分创建的资源。</p>
+      <ul>
+        <li>清理 <code>ApplicationManager</code> 的当前应用引用。</li>
+        <li>取消应用任务域，释放 message bus、core、service container 和 extension registry。</li>
+        <li>如果 main frame 已创建，也会在失败清理中释放。</li>
+      </ul>
+    </section>
+  </div>
+
+  <h2>线程边界</h2>
+  <table>
+    <thead>
+    <tr>
+      <th>阶段</th>
+      <th>执行位置</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+      <td><code>launchBlocking()</code> / <code>initBlocking()</code> / <code>startBlocking()</code></td>
+      <td>调用线程上的 <code>runBlocking</code></td>
+    </tr>
+    <tr>
+      <td>Look &amp; Feel、主题、窗口创建、Activity、首窗显示</td>
+      <td>EDT / <code>Dispatchers.Swing</code></td>
+    </tr>
+    <tr>
+      <td>插件目录和插件 XML 解析</td>
+      <td><code>JdeskStartupScope.asyncIo(...)</code></td>
+    </tr>
+    <tr>
+      <td>frame/app XML 解析</td>
+      <td><code>JdeskStartupScope.asyncDefault(...)</code></td>
+    </tr>
+    <tr>
+      <td>插件启动注册</td>
+      <td><code>Dispatchers.Default</code></td>
+    </tr>
+    <tr>
+      <td>Post-startup activity 和 ASYNC preload 服务</td>
+      <td>application-owned <code>ApplicationTaskScope</code></td>
+    </tr>
+    </tbody>
+  </table>
+
+  <h2>源码入口</h2>
+  <table>
+    <thead>
+    <tr>
+      <th>职责</th>
+      <th>源码</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+      <td>frame 推荐启动器</td>
+      <td><code>jdesk-framework-frame/src/main/java/com/jdesk/frame/boot/JdeskApplicationBuilder.java</code></td>
+    </tr>
+    <tr>
+      <td>coroutine-first 启动链</td>
+      <td><code>jdesk-framework-frame/src/main/java/com/jdesk/frame/boot/JdeskApplicationCoroutines.kt</code></td>
+    </tr>
+    <tr>
+      <td>应用对象、状态机、关闭和失败清理</td>
+      <td><code>jdesk-framework-frame/src/main/java/com/jdesk/frame/boot/JdeskApplication.java</code></td>
+    </tr>
+    <tr>
+      <td>core 服务、插件和容器协调</td>
+      <td><code>jdesk-framework-core/src/main/java/com/jdesk/core/app/ApplicationCore.java</code></td>
+    </tr>
+    <tr>
+      <td>frame/app XML 解析和应用</td>
+      <td><code>FrameConfigLoader.java</code> / <code>ApplicationConfigLoader.java</code></td>
+    </tr>
+    <tr>
+      <td>插件发现、解析、初始化和启动</td>
+      <td><code>jdesk-framework-core/src/main/java/com/jdesk/core/plugins/PluginManagerImpl.java</code></td>
+    </tr>
+    </tbody>
+  </table>
+
+  <footer>
+    HTML 版用于可视化阅读；完整文字说明和 Mermaid 源图见
+    <a href="application-startup-process.md">application-startup-process.md</a>。
+  </footer>
+</main>
+</body>
+</html>

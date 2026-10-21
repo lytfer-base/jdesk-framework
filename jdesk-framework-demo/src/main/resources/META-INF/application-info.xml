@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<application-info id="demo-app">
+    <names product="JDesk Framework Demo" fullName="JDesk Framework Demo"/>
+    <version major="0" minor="1" patch="0"/>
+    <company name="JDesk Lab"/>
+    <description>JDesk Framework demo application.</description>
+    <icon svg="icons/demo/app.svg" svg-small="icons/demo/app_16.svg"/>
+</application-info>

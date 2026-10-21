@@ -1,0 +1,31 @@
+# Maven
+target/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# No binaries in the repository
+*.jar
+
+# Runtime data under .root/; the demo's committed defaults stay tracked
+.root/config/
+.root/data/
+.root/log/
+.root/plugins/
+.root/system/
+.root/*/config/
+.root/*/data/
+.root/*/log/
+.root/*/system/*
+!.root/demo-app/system/application.properties
