@@ -41,3 +41,14 @@ JDesk Framework is a Java 17 / Swing desktop application framework (Maven multi-
 ## Commits
 
 - Commit messages follow `type(scope): summary` (for example `fix(vfs): keep file identity across renames`) and are written in English.
+
+## Branches and releases
+
+- Work and commit on `dev`, never directly on `main`. Check the current branch before you start.
+- `main` moves only at release time, by fast-forwarding it to `dev`. CI runs on pushes to `main` and on pull requests, not on `dev`. A ruleset protects `main`: no force pushes, no deletion, and the `build` check must pass.
+- Don't push; the maintainer does. Only `main` and tags are pushed, never `git push --all` or `--mirror`.
+- To release `X.Y.Z`:
+  1. On `dev`, set the version to `X.Y.Z` in the root pom, in every module's `<parent>` and in the demo's `META-INF/application-info.xml`, then commit.
+  2. Run `git switch main`, `git merge --ff-only dev` and `git switch dev`. The maintainer then pushes `main`.
+  3. Once CI passes on that commit, tag it with `git tag -a vX.Y.Z main -m "JDesk Framework X.Y.Z"`. The maintainer pushes the tag. No GitHub Release is published.
+  4. On `dev`, set the next `-SNAPSHOT` version in the root pom and in every module's `<parent>`.
