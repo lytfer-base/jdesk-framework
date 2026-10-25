@@ -36,7 +36,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -104,7 +103,12 @@ public final class McpServerService implements Disposable {
                 .serverInfo(serverName, serverVersion)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
                 .build();
-        Server http = new Server(new InetSocketAddress("127.0.0.1", port));
+        Server http = new Server();
+        // Don't pass an InetSocketAddress to Server: Jetty binds to its reverse-resolved host name.
+        ServerConnector connector = new ServerConnector(http);
+        connector.setHost("127.0.0.1");
+        connector.setPort(port);
+        http.addConnector(connector);
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
         context.addFilter(new FilterHolder(new EndpointGuard()),
@@ -119,7 +123,7 @@ public final class McpServerService implements Disposable {
         }
         jetty = http;
         mcpServer = server;
-        boundPort = ((ServerConnector) http.getConnectors()[0]).getLocalPort();
+        boundPort = connector.getLocalPort();
         writePortFile();
         LOG.info("MCP server '{}' listening on http://127.0.0.1:{}{}", serverName, boundPort, MCP_ENDPOINT);
     }
