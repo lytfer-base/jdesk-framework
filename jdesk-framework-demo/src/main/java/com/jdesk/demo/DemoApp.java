@@ -130,7 +130,7 @@ public class DemoApp {
         frame.showNotification(am.getAllActions().size() + " actions loaded");
 
         Notification.info("JDesk Framework Demo",
-                        "Actions, settings, themes, plugins, VFS and WebView<br/>" +
+                        "Actions, settings, themes, plugins, VFS and WebView. " +
                                 SystemInfo.formatMemory(SystemInfo.TOTAL_MEMORY) + " available")
                 .withTimeout(6000)
                 .show(frame);

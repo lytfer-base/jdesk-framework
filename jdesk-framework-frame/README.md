@@ -18,6 +18,7 @@
 | `com.jdesk.frame.window` | `JdfWindowWatcher`，为窗口生命周期观察和后续窗口管理预留 frame 服务。 |
 | `com.jdesk.frame.swing` | `SwingUiDispatcher`，集中处理 EDT 调度和断言。 |
 | `com.jdesk.frame.webview` | `WebViewService`、`JdfWebView` 和可配置 JCEF/JxBrowser 后端，提供可选加载的浏览器视图能力。 |
+| `com.jdesk.frame.update` | `UpdateService`、`UpdateServiceProvider`、`UpdateServices`、`UpdateView`、`UpdateHost`，可以缺省的自我更新扩展点，框架本身不带实现。 |
 | `com.jdesk.frame.storage` | `DatabaseService`、`DatabaseHandle`、`DatabaseSession`、迁移、生命周期和通用 SQLite 数据库资源入口。 |
 | `com.jdesk.frame.storage.dao` | `EntityDao`、`Repository`、`RowMapper`、`TypeConverter` 和基础实体 CRUD。 |
 | `com.jdesk.frame.storage.entity` | `@Table`、`@Column`、`@Id`、`@Index`、`@Transient`、`@SoftReference` 和 record entity schema 解析。 |
@@ -91,7 +92,7 @@ jdesk.webview.backend=jxbrowser
 
 `auto` 是默认值，当前优先使用 JBR 自带 JCEF，JCEF 不可用时再回退到 JxBrowser。
 
-应用可在 `<home>/system/application.properties` 中配置启动后预热：
+应用可在 `<program>/system/application.properties` 中配置启动后预热：
 
 ```properties
 jdesk.webview.warmup=none
@@ -114,10 +115,10 @@ jdesk.webview.warmup=view
 schema migration、实体注解解析、DAO 创建、单数据库写队列和生命周期兜底释放。调用模块拿到的是
 `DatabaseHandle`，可以按自己的生命周期主动 `dispose()` / `close()`，不必等到应用关闭。
 
-默认数据库路径为：
+默认数据库路径为（`<local>` 是 `PathManager.getLocalDir()`，没设 `-Djdesk.local.dir` 时就是 home）：
 
 ```text
-<home>/system/databases/<owner>/<name>.sqlite
+<local>/system/databases/<owner>/<name>.sqlite
 ```
 
 示例：
@@ -207,6 +208,42 @@ java -cp <app.jar> com.jdesk.frame.mcp.McpStdioBridge <url | 端口 | 端口文�
 - 模型或 Provider 出错时，Goose 可能把错误渲染成普通的助手文本、照常结束回合，不走协议错误通道，所以不能把「收到回答」当成功判据。
 - `mcpServers` 里的 HTTP 条目必须带 `headers` 字段，空数组也行；缺这个字段的条目会在 Goose 反序列化时被静默丢弃，Agent 就看不到这个 MCP server。
 - 切换模式只发 `session/set_mode` 这个 snake_case 方法名，Goose 认的是这种拼法。
+
+## UpdateService（可选的更新扩展点）
+
+`UpdateService`（`com.jdesk.frame.update`）是一个可以缺省的扩展点：框架只定义接口，不带实现，也不带任何更新相关的文字。构建里没有实现时，`UpdateServices.create` 给出 `Optional.empty()`，应用据此不放更新的菜单项和设置页。
+
+实现方在自己的 jar 里提供 `UpdateServiceProvider`，并把类名写进 `META-INF/services/com.jdesk.frame.update.UpdateServiceProvider`：
+
+```java
+public final class MyUpdateProvider implements UpdateServiceProvider {
+    @Override
+    public Optional<UpdateService> create(Application application) {
+        // 这个构建能自我更新时给出服务，否则给 Optional.empty()
+        return canUpdateItself() ? Optional.of(new MyUpdateService()) : Optional.empty();
+    }
+}
+```
+
+应用在启动时调用一次 `UpdateServices.create(application)`：
+
+- 用 `ServiceLoader` 在应用类加载器（`Application#getApplicationClassLoader`）上查找，没有应用时用框架自己的类加载器。不用 `app-plugins.xml`：它只读 classpath 上的第一份，几个 jar 没法各自贡献。
+- 第一个给出服务的提供者胜出，后面的不再询问。日志打一行 `update.service.selected provider=<类名>`；没有提供者，或者提供者都给了 `empty`，打 `update.service.none`。
+- 提供者在 `ServiceLoader` 阶段失败（类找不到、构造函数抛异常），或者 `create` 抛异常、返回 `null`，记 WARN 并跳过它，接着问下一个，不影响启动。读不出的提供者配置不会让查找死循环：失败几次后放弃，按没有更新处理。
+- 调用方拥有返回的服务：`UpdateService` 实现 `Disposable`，要用 `Disposer.register` 挂到自己的生命周期下。
+
+`UpdateService` 的线程约定：
+
+| 方法 | 线程 |
+|---|---|
+| `start(UpdateHost)` | 只调一次，任意线程 |
+| `view()`、`setAutoDownload(boolean)` | 任意线程 |
+| `addViewListener(Runnable)` | 任意线程注册；`view()` 变了就在任意线程回调，监听器一直留到服务 dispose |
+| `runMenuAction()`、`checkNow()` | EDT，必须马上返回 |
+
+界面文字都由服务经 `UpdateView` 给出（菜单项、设置页标题、自动下载开关的文字和提示、立即检查按钮、状态行、渠道名），已经按当前语言译好。框架不带更新文字，也不翻译它们，应用只管显示。
+
+`UpdateHost` 是应用交给服务的能力：`runAfterExit(program, arguments, exitNow)` 登记一条应用退出之后运行的命令（`program` 用绝对路径，`exitNow` 为 true 时同时请求应用立即退出），`clearRunAfterExit()` 撤回它。
 
 ## ApplicationActivity 和 PostStartupActivity
 
