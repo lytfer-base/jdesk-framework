@@ -58,7 +58,8 @@ public final class ApplicationStartupConfig {
                 .onUnmappableCharacter(CodingErrorAction.REPLACE);
     }
 
+    /** Returns {@code <program>/system/application.properties}, which may not exist. */
     public static Path getApplicationPropertiesPath() {
-        return PathManager.getSystemDir().resolve(APPLICATION_PROPERTIES);
+        return PathManager.getProgramDir().resolve(PathManager.SYSTEM_DIR).resolve(APPLICATION_PROPERTIES);
     }
 }

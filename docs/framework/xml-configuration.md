@@ -21,7 +21,7 @@ new JdeskApplication()
        -> 读取 META-INF/application-info.xml
        -> PathManager.setApplicationIdForCurrentProcess(applicationInfo.id)
   -> ApplicationStartupConfig.load()
-       -> 读取 <home>/system/application.properties
+       -> 读取 <program>/system/application.properties
        -> 写入 RuntimeParamRegistry
   -> StartupTrace.create()
 

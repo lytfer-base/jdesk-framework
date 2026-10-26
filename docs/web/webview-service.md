@@ -160,7 +160,7 @@ Disposer.dispose(webView);
 
 ## Web Storage 和稳定 origin
 
-JCEF 可以持久化 localStorage，但它依赖浏览器的用户数据目录，并且 localStorage 按页面 origin 隔离。JCEF 通过 `CefSettings.cache_path` 持久化 HTML5 storage，后端把它设成用户数据目录：默认 `<home>/system/jcef/user-data`，可用 `WebViewOptions.userDataDirectory(...)` 覆盖（只在引擎首次创建时生效）。如果没有稳定 cache path，localStorage 不能可靠跨会话保存。
+JCEF 可以持久化 localStorage，但它依赖浏览器的用户数据目录，并且 localStorage 按页面 origin 隔离。JCEF 通过 `CefSettings.cache_path` 持久化 HTML5 storage，后端把它设成用户数据目录：默认 `<local>/system/jcef/user-data`（`<local>` 是 `PathManager.getLocalDir()`，默认是 home），可用 `WebViewOptions.userDataDirectory(...)` 覆盖（只在引擎首次创建时生效）。如果没有稳定 cache path，localStorage 不能可靠跨会话保存。
 
 设计原则：
 

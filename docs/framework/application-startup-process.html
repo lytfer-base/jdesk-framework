@@ -594,7 +594,7 @@
       <h3>1. 构造阶段</h3>
       <p><code>JdeskApplication</code> 构造函数准备启动所需的基础对象，但不注册全局应用，也不进入初始化态。</p>
       <ul>
-        <li>读取 <code>PathManager.getSystemDir()/application.properties</code>，写入 <code>RuntimeParamRegistry</code>。</li>
+        <li>读取 <code>&lt;program&gt;/system/application.properties</code>（程序目录 <code>PathManager.getProgramDir()</code>，默认是 home），写入 <code>RuntimeParamRegistry</code>。</li>
         <li>创建 <code>StartupTrace</code> 和 application-owned <code>ApplicationTaskScope</code>。</li>
         <li>创建 <code>ApplicationCore</code>，内部持有 <code>ExtensionRegistryImpl</code> 和 <code>ServiceContainerImpl</code>。</li>
       </ul>

@@ -64,10 +64,10 @@ DatabaseService storage = application.getService(DatabaseService.class);
 
 ## 数据库文件路径
 
-默认数据库文件由 frame 管理，路径为：
+默认数据库文件由 frame 管理，路径为（`<local>` 是 `PathManager.getLocalDir()`，没设 `-Djdesk.local.dir` 时就是 home）：
 
 ```text
-<home>/system/databases/<owner>/<name>.sqlite
+<local>/system/databases/<owner>/<name>.sqlite
 ```
 
 示例（开发态 home 是 `.root/<appId>/`）：

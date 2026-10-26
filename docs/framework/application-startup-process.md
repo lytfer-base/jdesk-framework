@@ -119,7 +119,7 @@ app.start();
 | 记录启动时间 | `startTimeMillis` 用于统计初始化总耗时。 |
 | 校验类加载器 | `applicationClassLoader` 不能为空，后续 frame/app/plugin XML 都依赖它解析类型。 |
 | 加载应用信息 | `ApplicationInfoLoader.load(applicationClassLoader)` 会读取 `META-INF/application-info.xml`，并把其中的 `id` 交给 `PathManager`，用于开发模式下解析 `.root/<appId>/`。 |
-| 读取启动配置 | `ApplicationStartupConfig.load()` 会先 reset `RuntimeParamRegistry`，再读取 `PathManager.getSystemDir()/application.properties`，把属性写为 `STARTUP_CONFIG` 来源的 startup value。 |
+| 读取启动配置 | `ApplicationStartupConfig.load()` 会先 reset `RuntimeParamRegistry`，再读取 `<program>/system/application.properties`（程序目录 `PathManager.getProgramDir()`，`-Djdesk.program.dir` 优先，默认是 home），把属性写为 `STARTUP_CONFIG` 来源的 startup value。 |
 | 定界面语言、注册框架文案 | `I18nStartup.initialize()` 优先取 `-Djdesk.locale`，否则按 `<config>/locale.properties` 与系统首选语言协商，再 `I18n.initialize` 设当前语言与 JVM 默认 locale；随后 `I18n.registerRoot("jdesk/i18n", …, UiLanguage.EN)` 注册框架文案。见 [多语言](i18n.md)。 |
 | 创建启动追踪 | `StartupTrace.create()` 记录 span、counter、首窗显示时间和最终摘要。 |
 | 创建应用任务域 | `ApplicationTaskScope("application")` 是 application-owned coroutine/task scope，用于服务预加载、post-startup activity 等应用级后台任务。 |

@@ -8,7 +8,7 @@ import java.nio.file.*;
 import java.util.regex.Pattern;
 
 /**
- * Resolves the application home and its {@code plugins/}, {@code config/}, {@code log/} and {@code system/} subdirectories.
+ * Resolves the application home, the program directory and the machine-local directory, and the subdirectories below them.
  *
  * <p>The home is, in order: {@code -Djdesk.home}; in development mode {@code <project>/.root/<appId>/}, where
  * the project is the nearest ancestor of the working directory that contains {@code .root/}; otherwise the
@@ -20,14 +20,18 @@ public final class PathManager {
 
     private static final String ROOT_DIR = ".root";
     public static final String HOME_PROPERTY = "jdesk.home";
+    public static final String PROGRAM_DIR_PROPERTY = "jdesk.program.dir";
+    public static final String LOCAL_DIR_PROPERTY = "jdesk.local.dir";
     private static final String PLUGINS_DIR = "plugins";
     private static final String CONFIG_DIR = "config";
     private static final String LOG_DIR = "log";
-    private static final String SYSTEM_DIR = "system";
+    static final String SYSTEM_DIR = "system";
     private static final Pattern APPLICATION_ID_PATTERN = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private static volatile String applicationId = "";
     private static volatile Path homePath;
+    private static volatile Path programPath;
+    private static volatile Path localPath;
     private static volatile Path pluginsPath;
     private static volatile Path configPath;
     private static volatile Path logPath;
@@ -90,15 +94,75 @@ public final class PathManager {
     }
 
     private static Path resolveHomePathFromSystemProperty() {
-        String configuredHome = System.getProperty(HOME_PROPERTY);
-        if (configuredHome == null || configuredHome.trim().isEmpty()) {
+        Path result = pathFromProperty(HOME_PROPERTY);
+        if (result == null) {
             return null;
         }
 
-        Path result = Path.of(configuredHome.trim()).toAbsolutePath().normalize();
         ensureDir(result);
         LOG.info("Home path (system property {}): {}", HOME_PROPERTY, result);
         return result;
+    }
+
+    private static Path pathFromProperty(String property) {
+        String configured = System.getProperty(property);
+        if (configured == null || configured.trim().isEmpty()) {
+            return null;
+        }
+        return Path.of(configured.trim()).toAbsolutePath().normalize();
+    }
+
+    /**
+     * Returns the directory of the program's own files: {@code -Djdesk.program.dir}, else the home.
+     * Don't resolve program files against the home; the two may differ.
+     */
+    public static Path getProgramDir() {
+        Path result = programPath;
+        if (result != null) return result;
+
+        synchronized (LOCK) {
+            result = programPath;
+            if (result != null) return result;
+
+            Path configured = pathFromProperty(PROGRAM_DIR_PROPERTY);
+            if (configured != null) {
+                result = configured;
+                LOG.info("Program path (system property {}): {}", PROGRAM_DIR_PROPERTY, result);
+            } else {
+                result = getHomePath();
+            }
+
+            programPath = result;
+            return result;
+        }
+    }
+
+    /** Returns the machine-local directory: {@code -Djdesk.local.dir}, else the home. It is created on first access. */
+    public static Path getLocalDir() {
+        Path result = localPath;
+        if (result != null) return result;
+
+        synchronized (LOCK) {
+            result = localPath;
+            if (result != null) return result;
+
+            Path configured = pathFromProperty(LOCAL_DIR_PROPERTY);
+            if (configured != null) {
+                result = configured;
+                ensureDir(result);
+                LOG.info("Local path (system property {}): {}", LOCAL_DIR_PROPERTY, result);
+            } else {
+                result = getHomePath();
+            }
+
+            localPath = result;
+            return result;
+        }
+    }
+
+    /** Returns whether the machine-local directory differs from the home. */
+    public static boolean hasSeparateLocalDir() {
+        return !getLocalDir().equals(getHomePath());
     }
 
     /** Returns the nearest directory at or above {@code start} that contains a {@code .root/} directory, or {@code null}. */
@@ -157,12 +221,14 @@ public final class PathManager {
         }
     }
 
-    /** Overrides the home directory of this process; call it before the application initializes. */
+    /** Overrides the home directory and re-derives the others; call it before the application initializes. */
     public static void setHomePathForTests(Path homeDir) {
         synchronized (LOCK) {
             Path normalized = homeDir.toAbsolutePath().normalize();
             ensureDir(normalized);
             homePath = normalized;
+            programPath = null;
+            localPath = null;
             pluginsPath = null;
             configPath = null;
             logPath = null;
@@ -174,6 +240,8 @@ public final class PathManager {
     public static void resetForTests() {
         synchronized (LOCK) {
             homePath = null;
+            programPath = null;
+            localPath = null;
             pluginsPath = null;
             configPath = null;
             logPath = null;
@@ -198,7 +266,7 @@ public final class PathManager {
         }
     }
 
-    /** Returns {@code <home>/log/}, creating it on first access. */
+    /** Returns {@code <local>/log/}, creating it on first access. */
     public static Path getLogDir() {
         Path result = logPath;
         if (result != null) return result;
@@ -206,14 +274,14 @@ public final class PathManager {
         synchronized (LOCK) {
             result = logPath;
             if (result != null) return result;
-            result = getHomePath().resolve(LOG_DIR);
+            result = getLocalDir().resolve(LOG_DIR);
             ensureDir(result);
             logPath = result;
             return result;
         }
     }
 
-    /** Returns {@code <home>/system/}, creating it on first access. */
+    /** Returns {@code <local>/system/}, creating it on first access. */
     public static Path getSystemDir() {
         Path result = systemPath;
         if (result != null) return result;
@@ -221,7 +289,7 @@ public final class PathManager {
         synchronized (LOCK) {
             result = systemPath;
             if (result != null) return result;
-            result = getHomePath().resolve(SYSTEM_DIR);
+            result = getLocalDir().resolve(SYSTEM_DIR);
             ensureDir(result);
             systemPath = result;
             return result;

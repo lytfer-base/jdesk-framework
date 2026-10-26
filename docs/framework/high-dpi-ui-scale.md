@@ -190,7 +190,7 @@ pixelScale = systemScale * userScale
 
 显式用户缩放通过：
 
-`<home>/system/application.properties`
+`<program>/system/application.properties`
 
 ```properties
 jdesk.ui.scale=1.25
