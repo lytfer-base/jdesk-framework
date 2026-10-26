@@ -44,7 +44,7 @@ public final class UpdateServices {
                     break;
                 }
                 provider = providers.next();
-            } catch (ServiceConfigurationError failure) {
+            } catch (ServiceConfigurationError | LinkageError failure) {
                 lookupFailures++;
                 LOG.warn("update.service.provider.unavailable", failure);
                 continue;

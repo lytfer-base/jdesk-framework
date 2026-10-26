@@ -229,7 +229,7 @@ public final class MyUpdateProvider implements UpdateServiceProvider {
 
 - 用 `ServiceLoader` 在应用类加载器（`Application#getApplicationClassLoader`）上查找，没有应用时用框架自己的类加载器。不用 `app-plugins.xml`：它只读 classpath 上的第一份，几个 jar 没法各自贡献。
 - 第一个给出服务的提供者胜出，后面的不再询问。日志打一行 `update.service.selected provider=<类名>`；没有提供者，或者提供者都给了 `empty`，打 `update.service.none`。
-- 提供者在 `ServiceLoader` 阶段失败（类找不到、构造函数抛异常），或者 `create` 抛异常、返回 `null`，记 WARN 并跳过它，接着问下一个，不影响启动。读不出的提供者配置不会让查找死循环：失败几次后放弃，按没有更新处理。
+- 提供者在 `ServiceLoader` 阶段失败（类找不到、加载或链接失败如缺依赖或 JDK 版本不符、构造函数抛异常），或者 `create` 抛异常或链接错误、返回 `null`，记 WARN 并跳过它，接着问下一个，不影响启动。读不出的提供者配置不会让查找死循环：失败几次后放弃，按没有更新处理。
 - 调用方拥有返回的服务：`UpdateService` 实现 `Disposable`，要用 `Disposer.register` 挂到自己的生命周期下。
 
 `UpdateService` 的线程约定：
@@ -238,7 +238,7 @@ public final class MyUpdateProvider implements UpdateServiceProvider {
 |---|---|
 | `start(UpdateHost)` | 只调一次，任意线程 |
 | `view()`、`setAutoDownload(boolean)` | 任意线程 |
-| `addViewListener(Runnable)` | 任意线程注册；`view()` 变了就在任意线程回调，监听器一直留到服务 dispose |
+| `addViewListener(Runnable)`、`removeViewListener(Runnable)` | 任意线程；`view()` 变了就在任意线程回调监听器；移除一个没加过的监听器什么也不做 |
 | `runMenuAction()`、`checkNow()` | EDT，必须马上返回 |
 
 界面文字都由服务经 `UpdateView` 给出（菜单项、设置页标题、自动下载开关的文字和提示、立即检查按钮、状态行、渠道名），已经按当前语言译好。框架不带更新文字，也不翻译它们，应用只管显示。

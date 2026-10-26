@@ -14,8 +14,14 @@ public interface UpdateService extends Disposable {
     /** Returns the current texts and state; callable on any thread. */
     UpdateView view();
 
-    /** Registers a listener called, on any thread, when {@link #view()} changes; it stays until the service is disposed. */
+    /** Registers a listener to run, on any thread, when {@link #view()} changes; callable on any thread. */
     void addViewListener(Runnable listener);
+
+    /**
+     * Removes a listener registered with {@link #addViewListener}; callable on any thread.
+     * Removing a listener that was never added does nothing.
+     */
+    void removeViewListener(Runnable listener);
 
     /** Runs the action behind the current {@link UpdateView#menuLabel()}; called on the EDT, must return at once. */
     void runMenuAction();

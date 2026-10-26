@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class UpdateServicesTest {
 
     private static final String SERVICES_FILE = "META-INF/services/com.jdesk.frame.update.UpdateServiceProvider";
+    private static final String UNLINKABLE_PROVIDER = "com.jdesk.frame.update.UnlinkableProvider";
     private static final Application NO_APPLICATION = null;
     private static final List<String> ASKED = new ArrayList<>();
     private static Application lastApplication;
@@ -140,20 +142,38 @@ class UpdateServicesTest {
     }
 
     @Test
-    void unreadableProviderConfigurationEndsTheLookup() {
-        AtomicInteger attempts = new AtomicInteger();
-        URLClassLoader unreadable = new URLClassLoader(new URL[0], getClass().getClassLoader()) {
-            @Override
-            public Enumeration<URL> getResources(String name) throws IOException {
-                if (attempts.incrementAndGet() > 100) {
-                    throw new AssertionError("the lookup keeps retrying a configuration it cannot read");
-                }
-                throw new IOException("unreadable");
-            }
-        };
-        loaders.add(unreadable);
+    void providerClassThatCannotBeLinkedIsSkipped() throws IOException {
+        Lookup lookup = lookup(loaderWithUnlinkable(UNLINKABLE_PROVIDER, UNLINKABLE_PROVIDER, FakeProvider.class.getName()));
 
-        Lookup lookup = lookup(unreadable);
+        assertInstanceOf(FakeService.class, lookup.service().orElseThrow());
+        assertEquals(1, lookup.events(Level.WARN).size());
+        assertEquals(List.of("update.service.selected provider=" + FakeProvider.class.getName()), lookup.messages(Level.INFO));
+    }
+
+    @Test
+    void providerWhoseCreateFailsToLinkIsSkipped() throws IOException {
+        Lookup lookup = lookup(loaderWith(LinkageErrorProvider.class, FakeProvider.class));
+
+        assertInstanceOf(FakeService.class, lookup.service().orElseThrow());
+        assertEquals(1, lookup.events(Level.WARN).size());
+        assertEquals(List.of("LinkageErrorProvider", "FakeProvider"), ASKED);
+    }
+
+    @Test
+    void unreadableProviderConfigurationEndsTheLookup() {
+        Lookup lookup = lookupThroughFailingConfiguration(() -> {
+            throw new IOException("unreadable");
+        });
+
+        assertTrue(lookup.service().isEmpty());
+        assertEquals(List.of("update.service.none"), lookup.messages(Level.INFO));
+    }
+
+    @Test
+    void persistentLinkageErrorEndsTheLookup() {
+        Lookup lookup = lookupThroughFailingConfiguration(() -> {
+            throw new NoClassDefFoundError("missing dependency");
+        });
 
         assertTrue(lookup.service().isEmpty());
         assertEquals(List.of("update.service.none"), lookup.messages(Level.INFO));
@@ -191,21 +211,58 @@ class UpdateServicesTest {
     }
 
     private ClassLoader loaderWithNames(String... classNames) throws IOException {
+        return newLoader(servicesRoot(classNames));
+    }
+
+    private ClassLoader loaderWithUnlinkable(String unlinkable, String... classNames) throws IOException {
+        return newLoader(servicesRoot(classNames), unlinkable);
+    }
+
+    private Path servicesRoot(String... classNames) throws IOException {
         Path root = Files.createTempDirectory(dir, "loader");
         Path file = root.resolve(SERVICES_FILE);
         Files.createDirectories(file.getParent());
         Files.write(file, Arrays.asList(classNames));
-        return newLoader(root);
+        return root;
     }
 
     private ClassLoader emptyLoader() throws IOException {
         return newLoader(Files.createTempDirectory(dir, "empty"));
     }
 
-    private ClassLoader newLoader(Path root) throws IOException {
-        URLClassLoader loader = new URLClassLoader(new URL[]{root.toUri().toURL()}, getClass().getClassLoader());
+    private ClassLoader newLoader(Path root, String... unlinkable) throws IOException {
+        Set<String> rejected = Set.of(unlinkable);
+        URLClassLoader loader = new URLClassLoader(new URL[]{root.toUri().toURL()}, getClass().getClassLoader()) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (rejected.contains(name)) {
+                    throw new NoClassDefFoundError("a type that " + name + " depends on is missing");
+                }
+                return super.loadClass(name, resolve);
+            }
+        };
         loaders.add(loader);
         return loader;
+    }
+
+    private Lookup lookupThroughFailingConfiguration(Failure failure) {
+        AtomicInteger attempts = new AtomicInteger();
+        URLClassLoader failing = new URLClassLoader(new URL[0], getClass().getClassLoader()) {
+            @Override
+            public Enumeration<URL> getResources(String name) throws IOException {
+                if (attempts.incrementAndGet() > 100) {
+                    throw new AssertionError("the lookup keeps retrying a configuration it cannot read");
+                }
+                failure.raise();
+                return super.getResources(name);
+            }
+        };
+        loaders.add(failing);
+        return lookup(failing);
+    }
+
+    private interface Failure {
+        void raise() throws IOException;
     }
 
     private static Application applicationWith(ClassLoader loader) {
@@ -274,6 +331,14 @@ class UpdateServicesTest {
         }
     }
 
+    public static final class LinkageErrorProvider implements UpdateServiceProvider {
+        @Override
+        public Optional<UpdateService> create(Application application) {
+            ASKED.add("LinkageErrorProvider");
+            throw new NoClassDefFoundError("missing dependency");
+        }
+    }
+
     public static final class NullProvider implements UpdateServiceProvider {
         @Override
         public Optional<UpdateService> create(Application application) {
@@ -293,6 +358,10 @@ class UpdateServicesTest {
 
         @Override
         public void addViewListener(Runnable listener) {
+        }
+
+        @Override
+        public void removeViewListener(Runnable listener) {
         }
 
         @Override
