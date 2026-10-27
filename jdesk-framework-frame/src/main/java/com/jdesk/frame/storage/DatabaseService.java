@@ -16,11 +16,11 @@ public interface DatabaseService {
     DatabaseHandle open(DatabaseDescriptor descriptor);
 
     /**
-     * Borrows the database shared under the descriptor's id, opening it if needed. The returned handle can't be
-     * closed: {@code close} and {@code dispose} do nothing, so it is safe to register under your own Disposer parent.
+     * Borrows the shared database, opening it if needed, and retains the descriptor and current path policies.
+     * Closing or disposing the returned view does not close its owner.
      */
     default DatabaseHandle borrow(DatabaseDescriptor descriptor) {
-        return new BorrowedDatabaseHandle(open(descriptor));
+        return new BorrowedDatabaseHandle(open(descriptor), descriptor.options().pathAccess().capture());
     }
 
     /**

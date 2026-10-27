@@ -1,14 +1,12 @@
 package com.jdesk.frame.storage;
 
+import com.jdesk.core.io.PathAccessPolicy;
+
 import java.time.Duration;
 
 /**
- * Runtime options for a managed database.
- *
- * <p>The defaults favor desktop-app responsiveness: WAL is enabled,
- * synchronous mode is {@link Synchronous#NORMAL}, a small busy timeout is set,
- * and foreign keys are disabled to match the framework's weak-constraint data
- * strategy.
+ * Runtime options for a managed database; defaults enable creation, WAL and NORMAL synchronous mode.
+ * Existing-only mode prevents database creation, but still permits migrations and writes to existing files.
  */
 public final class DatabaseOptions {
 
@@ -16,12 +14,14 @@ public final class DatabaseOptions {
     private final boolean foreignKeys;
     private final Duration busyTimeout;
     private final Synchronous synchronous;
+    private final PathAccessPolicy pathAccess;
 
     private DatabaseOptions(Builder builder) {
         this.wal = builder.wal;
         this.foreignKeys = builder.foreignKeys;
         this.busyTimeout = builder.busyTimeout;
         this.synchronous = builder.synchronous;
+        this.pathAccess = builder.pathAccess;
     }
 
     /**
@@ -66,6 +66,11 @@ public final class DatabaseOptions {
         return synchronous;
     }
 
+    /** Returns the file creation policy used for every connection of this handle. */
+    public PathAccessPolicy pathAccess() {
+        return pathAccess;
+    }
+
     /**
      * Supported values for {@code PRAGMA synchronous}.
      */
@@ -78,6 +83,13 @@ public final class DatabaseOptions {
         private boolean foreignKeys;
         private Duration busyTimeout = Duration.ofSeconds(5);
         private Synchronous synchronous = Synchronous.NORMAL;
+        private PathAccessPolicy pathAccess = PathAccessPolicy.createMissing();
+
+        /** Sets the file creation policy; existing-only connections fail if the database disappears. */
+        public Builder pathAccess(PathAccessPolicy pathAccess) {
+            this.pathAccess = pathAccess;
+            return this;
+        }
 
         /**
          * Enables or disables {@code PRAGMA journal_mode=WAL}.
@@ -121,6 +133,9 @@ public final class DatabaseOptions {
             }
             if (synchronous == null) {
                 throw new StorageException("synchronous is required");
+            }
+            if (pathAccess == null) {
+                throw new StorageException("pathAccess is required");
             }
             return new DatabaseOptions(this);
         }

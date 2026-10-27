@@ -1,6 +1,7 @@
 package com.jdesk.frame.storage.sqlite;
 
 import com.jdesk.core.io.Cancellation;
+import com.jdesk.core.io.PathAccessPolicy;
 import com.jdesk.frame.storage.DatabaseCallback;
 import com.jdesk.frame.storage.DatabaseDescriptor;
 import com.jdesk.frame.storage.DatabaseHandle;
@@ -12,9 +13,12 @@ import com.jdesk.frame.storage.dao.EntityDao;
 import com.jdesk.frame.storage.dao.SqlEntityDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sqlite.SQLiteConfig;
+import org.sqlite.SQLiteOpenMode;
 
 import javax.swing.SwingUtilities;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -22,6 +26,7 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -29,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * SQLite database handle for one database file. Each operation opens a short-lived JDBC connection; writes and
@@ -101,14 +107,14 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         }
         List<DatabaseMigration> declared = List.copyOf(Objects.requireNonNull(migrations, "migrations"));
         rejectNestedWrite();
-        await(writerExecutor.submit(() -> {
+        await(writerExecutor.submit(contextualCall(() -> {
             try (Connection connection = openConnection()) {
                 new SqliteMigrationRunner(cleaned).run(connection, declared);
                 return null;
             } catch (SQLException e) {
                 throw new StorageException("Failed to migrate namespace " + cleaned + " in database: " + id(), e);
             }
-        }));
+        })));
     }
 
     /**
@@ -125,6 +131,10 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     @Override
     public Path path() {
         return path;
+    }
+
+    PathAccessPolicy pathAccess() {
+        return descriptor.options().pathAccess();
     }
 
     /**
@@ -167,7 +177,7 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     public <T> T write(DatabaseCallback<T> callback) {
         checkUsable();
         rejectNestedWrite();
-        return await(writerExecutor.submit(() -> executeWrite(callback)));
+        return await(writerExecutor.submit(contextualCall(() -> executeWrite(callback))));
     }
 
     /**
@@ -177,14 +187,14 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     public <T> T transaction(TransactionCallback<T> callback) {
         checkUsable();
         rejectNestedWrite();
-        return await(writerExecutor.submit(() -> {
+        return await(writerExecutor.submit(contextualCall(() -> {
             try (Connection connection = openConnection()) {
                 return SqliteTransactions.run(connection,
                         () -> callback.run(new SqliteDatabaseTransaction(connection)));
             } catch (SQLException e) {
                 throw new StorageException("Transaction failed for database: " + id(), e);
             }
-        }));
+        })));
     }
 
     /**
@@ -193,7 +203,7 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     @Override
     public <T> CompletableFuture<T> readAsync(DatabaseCallback<T> callback) {
         checkUsable();
-        return CompletableFuture.supplyAsync(() -> read(callback), readerExecutor);
+        return CompletableFuture.supplyAsync(contextualSupplier(() -> read(callback)), readerExecutor);
     }
 
     /**
@@ -202,7 +212,7 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     @Override
     public <T> CompletableFuture<T> writeAsync(DatabaseCallback<T> callback) {
         checkUsable();
-        return CompletableFuture.supplyAsync(() -> executeWrite(callback), writerExecutor);
+        return CompletableFuture.supplyAsync(contextualSupplier(() -> executeWrite(callback)), writerExecutor);
     }
 
     /**
@@ -303,7 +313,17 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
      * Opens one JDBC connection and applies the descriptor's SQLite pragmas.
      */
     Connection openConnection() throws SQLException {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+        SQLiteConfig config = new SQLiteConfig();
+        PathAccessPolicy access = pathAccess().capture();
+        try {
+            access.checkAccess(path);
+        } catch (IOException unavailable) {
+            throw new SQLException("Database root is unavailable: " + id(), unavailable);
+        }
+        if (access.requiresExistingRoot()) {
+            config.resetOpenMode(SQLiteOpenMode.CREATE);
+        }
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path, config.toProperties());
         try {
             applyPragmas(connection);
         } catch (SQLException | RuntimeException failure) {
@@ -316,6 +336,24 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
             throw failure;
         }
         return connection;
+    }
+
+    private static <T> Callable<T> contextualCall(Callable<T> operation) {
+        PathAccessPolicy access = PathAccessPolicy.current();
+        return () -> {
+            try (var scope = access.enter()) {
+                return operation.call();
+            }
+        };
+    }
+
+    private static <T> Supplier<T> contextualSupplier(Supplier<T> operation) {
+        PathAccessPolicy access = PathAccessPolicy.current();
+        return () -> {
+            try (var scope = access.enter()) {
+                return operation.get();
+            }
+        };
     }
 
     /**
