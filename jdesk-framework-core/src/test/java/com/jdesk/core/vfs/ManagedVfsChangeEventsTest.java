@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ManagedVfsChangeEventsTest {
 
@@ -65,6 +66,25 @@ class ManagedVfsChangeEventsTest {
         assertEquals(List.of(added), event.changes().added());
         assertEquals(List.of(updated), event.changes().updated());
         assertEquals(List.of(missing), event.changes().missing());
+        assertFalse(event.registered());
+    }
+
+    @Test
+    void registeredPublishingIsExplicitAndDoesNotChangeLegacyEvents() {
+        MessageBus bus = startApp();
+        List<ManagedVfsChangeEvent> received = new ArrayList<>();
+        bus.connect().subscribe(ManagedVfsChangeListener.class, received::add);
+        var publisher = new ManagedVfsChangePublisher();
+        var change = oneChange();
+        publisher.publishRegistered("lib", change);
+        publisher.publish("lib", change);
+        assertEquals(2, received.size());
+        assertTrue(received.get(0).registered());
+        assertFalse(received.get(1).registered());
+        assertFalse(new ManagedVfsChangeEvent("lib", change).registered());
+        assertEquals(change, received.get(0).changes());
+        publisher.publishRegistered("lib", new VfsScanResult(VfsRootId.of("r1"), List.of(), List.of(), List.of(), 0));
+        assertEquals(2, received.size());
     }
 
     @Test

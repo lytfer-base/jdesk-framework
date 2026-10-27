@@ -13,8 +13,17 @@ import java.util.Objects;
  */
 public final class ManagedVfsChangePublisher {
 
+    /** Publishes an explicitly registered batch, retaining the ordinary publisher's delivery and lifecycle rules. */
+    public void publishRegistered(String scopeId, VfsScanResult changes) {
+        publish(scopeId, changes, true);
+    }
+
     /** Publishes the diff as one batch event; skips an empty diff and a missing or disposed application. */
     public void publish(String scopeId, VfsScanResult changes) {
+        publish(scopeId, changes, false);
+    }
+
+    private void publish(String scopeId, VfsScanResult changes, boolean registered) {
         Objects.requireNonNull(scopeId, "scopeId");
         Objects.requireNonNull(changes, "changes");
         if (changes.added().isEmpty() && changes.updated().isEmpty() && changes.missing().isEmpty()) {
@@ -26,6 +35,6 @@ public final class ManagedVfsChangePublisher {
         }
         app.getMessageBus()
            .syncPublisher(ManagedVfsChangeListener.class)
-           .onManagedVfsChanged(new ManagedVfsChangeEvent(scopeId, changes));
+           .onManagedVfsChanged(new ManagedVfsChangeEvent(scopeId, changes, registered));
     }
 }

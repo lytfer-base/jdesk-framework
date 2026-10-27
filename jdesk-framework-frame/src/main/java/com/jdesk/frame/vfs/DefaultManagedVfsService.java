@@ -18,6 +18,7 @@ import com.jdesk.core.vfs.VfsFileId;
 import com.jdesk.core.vfs.VfsFileStatus;
 import com.jdesk.core.vfs.VfsManagedFile;
 import com.jdesk.core.vfs.VfsRootId;
+import com.jdesk.core.vfs.VfsRoot;
 import com.jdesk.core.vfs.VfsScanResult;
 import com.jdesk.core.vfs.VfsWatchListener;
 import com.jdesk.core.vfs.VfsWatcher;
@@ -29,6 +30,7 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -60,6 +62,7 @@ public final class DefaultManagedVfsService implements ManagedVfsService, Dispos
     private volatile VfsWatcher globalWatcher;
     private final VfsWatcherFactory watcherFactory;
     private final BiConsumer<String, VfsScanResult> publish;
+    private final BiConsumer<String, VfsScanResult> publishRegistered;
     /** Looks up a scope's local history store on use; empty for a scope without history, which then skips it. */
     private final Function<String, Optional<LocalHistoryStore>> historyLookup;
     private volatile boolean disposed;
@@ -79,7 +82,7 @@ public final class DefaultManagedVfsService implements ManagedVfsService, Dispos
     /** Creates the application service with the directory watcher and the message bus publisher. */
     public DefaultManagedVfsService() {
         this(new DirectoryWatcherVfsWatcherFactory(), new ManagedVfsChangePublisher()::publish,
-                DefaultManagedVfsService::lookupHistory);
+                DefaultManagedVfsService::lookupHistory, new ManagedVfsChangePublisher()::publishRegistered);
     }
 
     /** For tests: injects the watcher factory and a publish sink that needs no application or message bus. */
@@ -90,9 +93,16 @@ public final class DefaultManagedVfsService implements ManagedVfsService, Dispos
     /** For tests: also injects the history store lookup. */
     DefaultManagedVfsService(VfsWatcherFactory watcherFactory, BiConsumer<String, VfsScanResult> publish,
                              Function<String, Optional<LocalHistoryStore>> historyLookup) {
+        this(watcherFactory, publish, historyLookup, publish);
+    }
+
+    DefaultManagedVfsService(VfsWatcherFactory watcherFactory, BiConsumer<String, VfsScanResult> publish,
+                             Function<String, Optional<LocalHistoryStore>> historyLookup,
+                             BiConsumer<String, VfsScanResult> publishRegistered) {
         this.watcherFactory = Objects.requireNonNull(watcherFactory, "watcherFactory");
         this.publish = Objects.requireNonNull(publish, "publish");
         this.historyLookup = Objects.requireNonNull(historyLookup, "historyLookup");
+        this.publishRegistered = Objects.requireNonNull(publishRegistered, "publishRegistered");
     }
 
     /**
@@ -220,6 +230,71 @@ public final class DefaultManagedVfsService implements ManagedVfsService, Dispos
         VfsScanResult result = new VfsScanResult(registration.rootId(), addedRows, updatedRows, List.of(), 0);
         historyFor(registration.scopeId()).ifPresent(store -> HistoryFeed.feed(store, result, HistorySource.APP, false));
         publish.accept(registration.scopeId(), result);
+    }
+
+    /** Publishes a validated registered batch without scanning or writing history. */
+    @Override
+    public void notifyRegisteredChanges(String scopeId, VfsScanResult changes) {
+        checkUsable();
+        String id = requireScopeId(scopeId);
+        Objects.requireNonNull(changes, "changes");
+        Entry entry = catalogs.get(id);
+        if (entry == null) throw new IllegalStateException("Registered notifications require an open catalog: " + id);
+        synchronized (entry.order()) {
+            if (catalogs.get(id) != entry || entry.database().isDisposed()) {
+                throw new IllegalStateException("Registered notification catalog is no longer open: " + id);
+            }
+            VfsRoot root = entry.catalog().listRoots().stream().filter(value -> value.rootId().equals(changes.rootId()))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("Notification root is not registered"));
+            Map<VfsFileId, VfsManagedFile> present = new LinkedHashMap<>();
+            Set<Path> presentPaths = new HashSet<>();
+            validatePresentRows(entry.catalog(), root, changes.added(), present, presentPaths);
+            validatePresentRows(entry.catalog(), root, changes.updated(), present, presentPaths);
+            Set<VfsFileId> moved = new HashSet<>();
+            changes.added().forEach(row -> moved.add(row.fileId()));
+            Set<VfsFileId> missing = new HashSet<>();
+            Set<Path> missingPaths = new HashSet<>();
+            for (VfsManagedFile old : changes.missing()) {
+                validateNotificationPath(root, old);
+                if (!missing.add(old.fileId()) || !missingPaths.add(old.absolutePath())) {
+                    throw new IllegalArgumentException("Duplicate missing notification row");
+                }
+                VfsManagedFile replacement = present.get(old.fileId());
+                if (replacement != null) {
+                    if (!moved.contains(old.fileId()) || replacement.relativePath().equals(old.relativePath())
+                            || replacement.directory() != old.directory()) {
+                        throw new IllegalArgumentException("Contradictory relocated notification row");
+                    }
+                } else if (entry.catalog().findFile(old.fileId()).filter(row -> row.status() == VfsFileStatus.PRESENT
+                        || !row.rootId().equals(old.rootId()) || !row.relativePath().equals(old.relativePath())
+                        || row.directory() != old.directory()).isPresent()) {
+                    throw new IllegalArgumentException("Removed notification does not match the current catalog");
+                }
+            }
+            if (!present.isEmpty() || !missing.isEmpty()) publishRegistered.accept(id, changes);
+        }
+    }
+
+    private static void validatePresentRows(VfsCatalog catalog, VfsRoot root, List<VfsManagedFile> rows,
+                                            Map<VfsFileId, VfsManagedFile> present, Set<Path> paths) {
+        for (VfsManagedFile row : rows) {
+            validateNotificationPath(root, row);
+            if (row.status() != VfsFileStatus.PRESENT || present.putIfAbsent(row.fileId(), row) != null
+                    || !paths.add(row.absolutePath())) {
+                throw new IllegalArgumentException("Duplicate or non-present notification row");
+            }
+            if (!catalog.findFile(row.fileId()).filter(row::equals).isPresent()) {
+                throw new IllegalArgumentException("Notification row does not match the current catalog");
+            }
+        }
+    }
+
+    private static void validateNotificationPath(VfsRoot root, VfsManagedFile row) {
+        Path expected = root.rootPath().resolve(row.relativePath()).normalize();
+        if (!root.rootId().equals(row.rootId()) || !expected.startsWith(root.rootPath())
+                || expected.equals(root.rootPath()) || !expected.equals(row.absolutePath())) {
+            throw new IllegalArgumentException("Notification row is outside its registered root");
+        }
     }
 
     /** Resolves ids to current snapshot rows, skipping ids that are gone or belong to another scope. */

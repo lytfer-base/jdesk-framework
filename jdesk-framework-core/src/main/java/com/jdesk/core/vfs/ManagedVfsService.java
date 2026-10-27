@@ -60,6 +60,15 @@ public interface ManagedVfsService {
     void notifyChanged(String scopeId, List<VfsFileId> created, List<VfsFileId> updated);
 
     /**
+     * Publishes already-registered changes without watching, scanning or feeding history; rejects stale or inconsistent rows.
+     * Include old and new rows with the same ID for moves, and every affected descendant for subtree changes.
+     * Delivery does not acknowledge subscriber completion; coordinate destructive writes separately.
+     */
+    default void notifyRegisteredChanges(String scopeId, VfsScanResult changes) {
+        throw new UnsupportedOperationException("Registered change notifications are not supported");
+    }
+
+    /**
      * Called by a writer right after writing a file: reconciles it, hands the new content to local history with
      * source APP and returns the refreshed row; a scope without history is only reconciled. Use it instead of
      * {@code catalog.refreshFile}.
