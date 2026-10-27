@@ -54,7 +54,7 @@ DatabaseService storage = application.getService(DatabaseService.class);
 | `DatabaseService` | frame 层数据库入口，用于打开、查找和关闭数据库资源。 |
 | `DatabaseDescriptor` | 描述一个数据库：id、owner、文件名、配置、migration、entity。 |
 | `DatabaseOwner` | 数据库归属，当前支持 application owner 和 plugin owner。 |
-| `DatabaseOptions` | SQLite 运行配置，例如 WAL、foreign keys、busy timeout、synchronous。 |
+| `DatabaseOptions` | SQLite 运行配置，例如 WAL、foreign keys、busy timeout、synchronous，以及缺文件时能不能新建（`pathAccess`）。 |
 | `DatabaseHandle` | 一个具体数据库资源，可读写、事务、创建 DAO，也可主动关闭。 |
 | `DatabaseSession` | 一次受控数据库访问上下文，只在 callback 内有效。 |
 | `DatabaseTransaction` | 一次受控事务上下文，使用同一个底层连接和事务边界。 |
@@ -108,7 +108,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.notes")
 DatabaseHandle database = storage.open(descriptor);
 ```
 
-如果同一个 database id 已经打开，`DatabaseService.open(...)` 会返回现有 handle，调用方不需要重复创建数据库连接。这时后一份 descriptor 里的 location 和 migration 都不会生效；它解析出的文件路径与已开的不同时，`open` 直接抛 `StorageException`。一个库只留一个创建 descriptor 的入口。
+如果同一个 database id 已经打开，`DatabaseService.open(...)` 会返回现有 handle，调用方不需要重复创建数据库连接。这时后一份 descriptor 里的 location 和 migration 都不会生效；它解析出的文件路径或 `pathAccess`（见「只开已有的库」）与已开的不同时，`open` 直接抛 `StorageException`。一个库只留一个创建 descriptor 的入口。
 
 报错而不是照旧返回已开的句柄，是因为这种错配原本完全无声：同一个库有两个创建 descriptor 的入口、位置又不同时，谁先跑就决定库落在哪，而先后取决于启动任务和用户操作谁快，两次运行可能不一样。输的一方以为自己开的是指定位置的库，实际拿到的是另一个文件：真正的库没被打开，新加的迁移永远跑不到，数据被分成两半。同路径重开照常静默返回，那是多个调用方共用一个库的正常情形；判路径时也不建目录，被拒绝的位置不会留下空目录。
 
@@ -157,6 +157,32 @@ DatabaseOptions options = DatabaseOptions.builder()
 ```
 
 框架约定默认不使用外键硬约束。关系字段保存普通 id，异常、孤儿数据和修复由 Repository、诊断工具或业务逻辑处理。
+
+## 只开已有的库
+
+默认情况下，库文件或它所在的目录不在就新建。库跟着一个可能被外部移走或删掉的内容目录走时，新建反而有害：建回来的是一个空目录和空库，看着像原来的东西还在，接下来的写入全落进这个替身。这时用 `PathAccessPolicy`（core 的 `com.jdesk.core.io`）要求库只能是已有的那个：
+
+```java
+DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.meta")
+        .owner(DatabaseOwner.application("myapp"))
+        .name("meta")
+        .location(contentRoot.resolve(".meta"))
+        .options(DatabaseOptions.builder()
+                .pathAccess(PathAccessPolicy.existingRoot(contentRoot))
+                .build())
+        .build();
+```
+
+`PathAccessPolicy.createMissing()` 是默认值，照旧建出缺的路径；`existingRoot(root)` 要求 `root`（绝对路径）一直是个目录，并且永不重建它。descriptor 用了后者时：
+
+- 必须用 `location(...)` 给出位置，`<location>/<name>.sqlite` 也必须已经存在，否则 `open` 抛 `StorageException`，不建目录也不建文件。
+- 每条连接先查 root 还在、库文件在 root 之下，再以不带 SQLite 新建标志的方式打开：句柄开着时文件被外部删掉，之后的读写会失败，而不是在原路径上建出空库；再 `open` 也抛异常，不像默认策略那样丢掉旧句柄重建（见「主动释放数据库」）。
+- 迁移与写入照常，改的都是那个已有的文件。
+- 同一个 id 换一种 `pathAccess` 再 `open` 抛 `StorageException`，与换位置一样。
+
+策略也能只管一段操作：`policy.enter()` 返回绑在当前线程上的 `Scope`，用 try-with-resources 关，必须在同一线程上、按与进入相反的顺序关。作用域里经过的数据库读写、`AtomicFiles.write`（父目录必须已经在）、`PathAccessPolicy.createDirectories`（只在 root 下已有的祖先之下补建）和[本机历史](local-history.md)都按它办，root 本身不见了就失败。它不改已开句柄自己的策略，离开作用域后的操作也不受影响。排进写执行器、异步读写的任务带着提交时的作用域；`borrow` 得到的视图记着借出那一刻 descriptor 策略与当前作用域合起来的那份，之后经它的每次读写都按这份办。作用域可以嵌套，里层只能收紧（root 更深）不能放宽，两个互不包含的 root 叠在一起抛 `IllegalStateException`。
+
+这是检查、不是锁：查过之后到真正写下去之前，目录仍可能被外部挪走。它管的是框架自己不把已经没了的目录建回来。
 
 ## 读写和事务
 

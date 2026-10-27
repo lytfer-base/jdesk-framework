@@ -14,7 +14,7 @@
 
 ## 目录与文件
 
-一个 scope 一个目录，由 `LocalHistoryService.openStore(scopeId, historyDir, policy)` 打开（目录不存在就建，同一 scope 已开时返回已开的 store）：
+一个 scope 一个目录，由 `LocalHistoryService.openStore(scopeId, historyDir, policy)` 打开（目录不存在就建；同一 scope 已开时，目录和 `policy` 都与已开的相同才返回它，有一样不同就抛 `IllegalArgumentException`，免得调用方以为换了位置或策略、其实都没生效）：
 
 ```
 <historyDir>/
@@ -26,6 +26,8 @@
 `history.sqlite` 四张表：`lh_objects`（哈希、原始与存储字节数）、`lh_activities`（活动名、来源、起止时间、参数；参数是开活动时交的一段文本，框架原样存取、不解释）、`lh_versions`（key、路径、对象哈希、换行归一化哈希、大小、时间、来源、活动、标签、封住标记、跳过原因）、`lh_heads`（每个 key 的路径、头版本、内容哈希、删除时间；路径由最近一次落下版本的捕获或带位置的删除标记写下，内容没变的捕获不改它，所以只对已删除的条目可靠：文件回来时内容没变，路径仍停在删除时的位置）。打开缺 `lh_activities.params` 列的旧库时记一条 ERROR（提示先转换再用），只报不改，也不走下面的隔离重建。
 
 库坏了（SQLite 报 corrupt 或 notadb）时把 `history.sqlite` 连同 `-wal`、`-shm` 改名加上 `.broken-<epoch>` 后缀，再重建空库。目录建不出、库暂时打不开（磁盘满、权限这类环境故障，库不隔离）或重建后仍打不开时，`openStore` 不抛异常，换成什么都不记的空 store，`stats().unavailableReason()` 给原因 `HistoryUnavailableReason`（`DIRECTORY_UNAVAILABLE`、`TEMPORARILY_UNAVAILABLE`、`OPEN_FAILED`），技术细节只进日志。界面据此提示历史暂不可用；原因文字由应用按 `code()`（`directoryUnavailable`、`temporarilyUnavailable`、`openFailed`）取文案，框架不给界面文字。
+
+在 `PathAccessPolicy.existingRoot(root)` 的作用域里打开（见 [SQLite Storage「只开已有的库」](sqlite-storage.md#只开已有的库)），上面这些兜底一样都不做：目录和 `history.sqlite` 必须已经在，四张表也已建好（迁移只核对、不建表），否则 `openStore` 抛 `StorageException`，不建目录、不写 `.gitignore`、不隔离重建，也不换成空 store。这是给历史目录放在内容目录里、内容目录可能已被外部移走的场合用的：这时建出空库，等于在原位置造一个看着还在的替身。已开的 store 在这种作用域里再取（`openStore`、`findOpenStore`）也先查这几样还在。作用域跟着工作走：捕获和 `seal`、`markDeleted` 这类排队操作按提交那一刻的作用域执行，维护和关 store 时的 `sealAll` 按打开时的作用域执行；之后在普通作用域里再 `openStore` 一次，只把以后的维护和关闭换成普通作用域，已经排着的操作不放宽。
 
 ## 捕获
 
@@ -67,4 +69,4 @@ VFS 服务按同一个 scopeId 用时现取 `findOpenStore(scopeId)`：要让某
 
 ## 测试
 
-core：`HistoryPolicyTest`。frame：`HistoryObjectStoreTest`、`SqliteLocalHistoryStoreTest`（折叠、封版、外部活动、改键、删除标记与删除位置）、`HistoryRetentionTest`、`DefaultLocalHistoryServiceTest`（坏库隔离、缺列旧库只报不改、`.gitignore`）、`DefaultManagedVfsServiceHistoryTest`（三条路的捕获与基线、缺失带位置标删除）。
+core：`HistoryPolicyTest`。frame：`HistoryObjectStoreTest`、`SqliteLocalHistoryStoreTest`（折叠、封版、外部活动、改键、删除标记与删除位置）、`HistoryRetentionTest`、`DefaultLocalHistoryServiceTest`（坏库隔离、缺列旧库只报不改、`.gitignore`）、`HistoryExistingRootTest` 与 `HistoryObjectsExistingRootTest`（只开已有的历史：不建、不重建，排队操作沿用作用域）、`DefaultManagedVfsServiceHistoryTest`（三条路的捕获与基线、缺失带位置标删除）。

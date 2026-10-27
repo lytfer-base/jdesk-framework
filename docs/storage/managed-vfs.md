@@ -157,10 +157,11 @@ VfsCatalog catalog = vfsService.openCatalog(
 - `listChildren(rootId, dirRelativePath)`：从快照枚举某目录直接子项（目录优先、不读盘）。
 - `openCatalog(scopeId, backend, locale)`：按 locale 生成 `file_name_sort` 排序键，见「文件名排序键与 locale」。
 - `ManagedVfsBridge`：活动 `VirtualFile` 树与 `VfsManagedFile` 快照互转。
-- `ManagedVfsChangePublisher` / `ManagedVfsChangeListener`：把一次 refresh 的 `VfsScanResult` 作为**一个批量事件**经 [MessageBus](../framework/message-bus.md) 投递（空批次不发，per-subscriber 异常隔离）。
+- `ManagedVfsChangePublisher` / `ManagedVfsChangeListener`：把一次 refresh 的 `VfsScanResult` 作为**一个批量事件**经 [MessageBus](../framework/message-bus.md) 投递（空批次不发，per-subscriber 异常隔离）。`publishRegistered` 发出的批次 `ManagedVfsChangeEvent.registered()` 为 true（见下文 `notifyRegisteredChanges`），其余为 false。
 - `watch(...)` / `unwatch(...)`：多个 scope 共用一个懒建的目录监控器；按各 scope 的 `ScanFilter` 过滤事件、去抖并对账后发布。去抖有最长等待，持续改动时也会先刷一批；监控意外终止（被监控的文件夹被移走、事件循环出错，监控库在全部 WatchKey 失效后会自己关闭）按失败处理：清掉已监控状态并带退避自动重建。一个 scope 或一个目录的对账失败只丢它自己那一份。
 - `syncFromDisk(...)`：对正在监控的 scope 做全树对账，是显式“与磁盘同步”的兜底入口。
 - `notifyChanged(...)`：应用已写盘并自行更新快照后，显式通知正在监控的 scope；不能依赖 watcher 再次发现已被自己对账消除的差异。
+- `notifyRegisteredChanges(scopeId, changes)`：写盘方已经登记进快照的新增、改名移动和删除，核对后作为一个 `registered()` 为 true 的批次发出；不对账、不要求正在监控，也不交给本机历史。
 - `fileWritten(scopeId, fileId)` / `fileOpened(scopeId, fileId)` / `reconcile(scopeId, rootId, filter)`：应用自己写盘后的单文件对账、打开文件时的懒基线、整树对账（对账 + 基线 + publish）。这三条路连同 watcher 批次与 `notifyChanged` 把文件内容交给 [本机历史](local-history.md)（`HistoryFeed`）；没开历史 store 的 scope 跳过历史内容处理。
 - 关闭 catalog 后拒绝继续访问。
 - `DatabaseDescriptor.location(...)` 支持绝对目录；调用方可以将 catalog 所用 `DatabaseHandle` 放在宿主模块的私有数据库文件中，例如跟着内容目录一起走的元数据库。该能力只决定数据库文件位置，不会替 Managed VFS 自动发现、迁移或管理任意外部数据库。
@@ -168,6 +169,8 @@ VfsCatalog catalog = vfsService.openCatalog(
 `syncFromDisk(...)` 兜的是 watcher 漏事件：网络盘收不到变更通知、WatchService 因权限或句柄耗尽挂掉、事件溢出，以及监控重建的空窗期。这些失效都是整棵树级别的，用户也正是因为看不到某个文件才要同步、指认不出是哪个目录，所以只提供整树对账，不提供按目录的粒度。它与 watcher 走同一条发布路径，编辑器冲突检测这类订阅者能一并跟上。
 
 `notifyChanged(...)` 补的是写盘方自己造成的盲区：写盘方按「谁改的谁登记」在写完当场更新快照（`registerFile`、`fileWritten` 等），watcher 随后那趟对账看到快照与磁盘完全一致，三个列表全空，订阅者什么都收不到；`syncFromDisk` 也救不了，它同样只是再对一次账。所以 `notifyChanged` 不再对账，直接把交进来的 id 解析成当前快照行发布出去，解析不到的跳过。典型场景是跨窗口写入：一处借用同一个 catalog，往另一个正开着、正被监控的工作区里写文件。
+
+`notifyRegisteredChanges(...)` 补的是 `notifyChanged` 说不出的那部分：`notifyChanged` 只收 id、再解析成当前快照行，而改名移动和删除登记完以后，旧路径那一行已不在快照里，订阅者无从知道它原来在哪（比如开着的编辑器要据此跟到新路径或关掉）。这里改收一份完整的 `VfsScanResult`：新增与变更交登记后的当前行，必须与快照里那一行完全一致且是 PRESENT；删除交删除前的旧行，快照里这个 id 已经没有或已不是 PRESENT；改名移动把同一个 id 的旧行放进 `missing`、新行放进 `added`；动了一棵子树就把底下每一行都交上来。行与快照对不上、落在 root 外、同一个 id 或路径交了两次、移动前后路径一样，都抛 `IllegalArgumentException`，一条也不发；catalog 没开着抛 `IllegalStateException`；接口的默认实现抛 `UnsupportedOperationException`。方法返回不代表订阅者都已处理完，接下来要做删除、覆盖这类改不回来的写入，得另外与订阅者协调。
 
 ## 外部变化与文件身份
 
