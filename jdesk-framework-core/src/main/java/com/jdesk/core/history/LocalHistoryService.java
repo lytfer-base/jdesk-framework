@@ -10,8 +10,9 @@ import java.util.Optional;
 public interface LocalHistoryService {
 
     /**
-     * Opens or returns the store, creating its directory if needed; if it can't be opened, returns an unavailable
-     * store instead of throwing.
+     * Opens or reuses the same directory and history policy; defaults create or recover storage and return an unavailable store on failure.
+     * An existing-root path scope requires prepared history and throws on failure; queued work retains that scope.
+     * An ordinary reopen adopts future maintenance and close work without relaxing already queued operations.
      */
     LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy);
 

@@ -2,8 +2,13 @@ package com.jdesk.core.io;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * A shared path access policy for storage and file operations, optionally bound to an existing root.
@@ -99,6 +104,49 @@ public final class PathAccessPolicy {
                 throw new IOException("Required root is unavailable: " + root);
             }
         }
+    }
+
+    /** Creates missing directories under this policy; strict scopes never recreate an observed existing ancestor. */
+    public void createDirectories(Path directory) throws IOException {
+        PathAccessPolicy access = capture();
+        if (!access.requiresExistingRoot()) {
+            Files.createDirectories(directory);
+            return;
+        }
+        access.createDirectories(directory, created -> { });
+    }
+
+    /** Creates directories and reports each directory created by this call, in creation order. */
+    public void createDirectories(Path directory, Consumer<Path> created) throws IOException {
+        Objects.requireNonNull(created, "created");
+        PathAccessPolicy access = capture();
+        Path target = directory.toAbsolutePath().normalize();
+        access.checkAccess(target);
+        var missing = new ArrayList<Path>();
+        Path anchor = target;
+        for (;;) {
+            try {
+                if (!Files.readAttributes(anchor, BasicFileAttributes.class).isDirectory()) {
+                    throw new IOException("Required parent is not a directory: " + anchor);
+                }
+                break;
+            } catch (NoSuchFileException absent) {
+                if (anchor.equals(access.root) || anchor.getParent() == null) throw absent;
+                missing.add(anchor);
+                anchor = anchor.getParent();
+            }
+        }
+        for (int i = missing.size() - 1; i >= 0; i--) {
+            access.checkAccess(target);
+            Path child = missing.get(i);
+            try {
+                Files.createDirectory(child);
+                created.accept(child);
+            } catch (FileAlreadyExistsException concurrent) {
+                if (!Files.isDirectory(child)) throw concurrent;
+            }
+        }
+        access.checkAccess(target);
     }
 
     @Override

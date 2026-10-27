@@ -1,6 +1,7 @@
 package com.jdesk.frame.history;
 
 import com.jdesk.core.io.AtomicFiles;
+import com.jdesk.core.io.PathAccessPolicy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -51,7 +52,9 @@ public final class HistoryObjectStore {
     }
 
     public boolean exists(String hash) {
-        return Files.isRegularFile(pathOf(hash));
+        Path path = pathOf(hash);
+        checkAccess(path);
+        return Files.isRegularFile(path);
     }
 
     /** Stores the content; an existing non-empty object isn't rewritten, and its size is reported. */
@@ -59,12 +62,15 @@ public final class HistoryObjectStore {
         String hash = hashOf(data);
         Path target = pathOf(hash);
         try {
+            PathAccessPolicy access = PathAccessPolicy.current();
+            access.checkAccess(target);
             long existing = Files.isRegularFile(target) ? Files.size(target) : 0;
             if (existing > 0) {
                 return new StoredObject(hash, data.length, existing, false);
             }
             // Must stay atomic: a truncated object would pass as existing and break every version that uses it.
             byte[] packed = deflate(data);
+            access.createDirectories(target.getParent());
             AtomicFiles.write(target, packed);
             return new StoredObject(hash, data.length, packed.length, true);
         } catch (IOException e) {
@@ -74,11 +80,13 @@ public final class HistoryObjectStore {
 
     /** Deletes stale temp files left by killed processes and returns how many were deleted. */
     public int sweepTempFiles() {
+        checkAccess(objectsDir);
         return AtomicFiles.sweepStaleTempFiles(objectsDir);
     }
 
     public Optional<byte[]> read(String hash) {
         Path path = pathOf(hash);
+        checkAccess(path);
         if (!Files.isRegularFile(path)) {
             return Optional.empty();
         }
@@ -92,9 +100,19 @@ public final class HistoryObjectStore {
 
     public void delete(String hash) {
         try {
-            Files.deleteIfExists(pathOf(hash));
+            Path path = pathOf(hash);
+            PathAccessPolicy.current().checkAccess(path);
+            Files.deleteIfExists(path);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to delete history object: " + hash, e);
+        }
+    }
+
+    private static void checkAccess(Path path) {
+        try {
+            PathAccessPolicy.current().checkAccess(path);
+        } catch (IOException unavailable) {
+            throw new UncheckedIOException("History object path is unavailable: " + path, unavailable);
         }
     }
 

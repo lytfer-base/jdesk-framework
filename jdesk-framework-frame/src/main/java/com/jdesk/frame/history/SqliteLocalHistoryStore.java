@@ -10,6 +10,7 @@ import com.jdesk.core.history.HistorySource;
 import com.jdesk.core.history.HistoryStats;
 import com.jdesk.core.history.HistoryVersion;
 import com.jdesk.core.history.LocalHistoryStore;
+import com.jdesk.core.io.PathAccessPolicy;
 import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseRow;
 import java.io.IOException;
@@ -124,10 +125,11 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
             return;
         }
         Activity activity = currentActivity.get();
+        PathAccessPolicy access = PathAccessPolicy.current();
         beginPending();
         try {
             CompletableFuture.runAsync(() -> {
-                try {
+                try (var scope = access.enter()) {
                     onExecutor(() -> {
                         captureBatch(batch, activity);
                         return null;
@@ -230,10 +232,11 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
     private CompletableFuture<CaptureResult> submitCapture(CaptureRequest request, boolean baseline) {
         Objects.requireNonNull(request, "request");
         Activity activity = currentActivity.get();
+        PathAccessPolicy access = PathAccessPolicy.current();
         beginPending();
         try {
             return CompletableFuture.supplyAsync(() -> {
-                try {
+                try (var scope = access.enter()) {
                     return onExecutor(() -> guarded(request, baseline, activity));
                 } finally {
                     endPending();
@@ -285,11 +288,13 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
     }
 
     private static <T> T onExecutor(Supplier<T> task) {
+        boolean previous = ON_EXECUTOR.get();
         ON_EXECUTOR.set(true);
         try {
             return task.get();
         } finally {
-            ON_EXECUTOR.set(false);
+            if (previous) ON_EXECUTOR.set(true);
+            else ON_EXECUTOR.remove();
         }
     }
 
@@ -298,9 +303,15 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
      * shut down, it runs in place and returns {@code null}.
      */
     private CompletableFuture<Void> submitOrdered(Runnable op) {
+        PathAccessPolicy access = PathAccessPolicy.current();
+        Runnable guarded = () -> {
+            try (var scope = access.enter()) {
+                op.run();
+            }
+        };
         if (ON_EXECUTOR.get()) {
             synchronized (writeLock) {
-                op.run();
+                guarded.run();
             }
             return null;
         }
@@ -310,7 +321,7 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
                 try {
                     onExecutor(() -> {
                         synchronized (writeLock) {
-                            op.run();
+                            guarded.run();
                         }
                         return null;
                     });
@@ -321,7 +332,7 @@ public final class SqliteLocalHistoryStore implements LocalHistoryStore {
         } catch (RejectedExecutionException rejected) {
             try {
                 synchronized (writeLock) {
-                    op.run();
+                    guarded.run();
                 }
             } finally {
                 endPending();

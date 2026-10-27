@@ -2,11 +2,13 @@ package com.jdesk.frame.history;
 
 import com.jdesk.core.app.ApplicationManager;
 import com.jdesk.core.disposer.Disposable;
+import com.jdesk.core.disposer.Disposer;
 import com.jdesk.core.history.HistoryPolicy;
 import com.jdesk.core.history.HistoryUnavailableReason;
 import com.jdesk.core.history.LocalHistoryService;
 import com.jdesk.core.history.LocalHistoryStore;
 import com.jdesk.core.io.Cancellation;
+import com.jdesk.core.io.PathAccessPolicy;
 import com.jdesk.frame.storage.DatabaseDescriptor;
 import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseMigration;
@@ -35,14 +37,15 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Application service for local history: opens and closes a {@link SqliteLocalHistoryStore} per scope, and all
- * stores share one capture thread and one maintenance scheduler. A corrupt database is renamed aside and rebuilt;
- * if that fails too, the scope gets an unavailable empty store, so history never blocks its callers.
+ * stores share one capture thread and one maintenance scheduler. Defaults recover corrupt databases or return an
+ * unavailable store; existing-root scopes require prepared history and fail without rebuilding it.
  */
 public final class DefaultLocalHistoryService implements LocalHistoryService, Disposable {
 
@@ -70,7 +73,8 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
     private static final int SQLITE_NOTADB = 26;
     private static final Duration MAINTENANCE_PERIOD = Duration.ofHours(6);
 
-    private record Open(LocalHistoryStore store, DatabaseHandle database, ScheduledFuture<?> maintenance) {
+    private record Open(Path directory, LocalHistoryStore store, DatabaseHandle database, ScheduledFuture<?> maintenance,
+                        AtomicReference<PathAccessPolicy> background) {
     }
 
     private final Supplier<DatabaseService> databases;
@@ -102,32 +106,49 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         Objects.requireNonNull(historyDir, "historyDir");
         Objects.requireNonNull(policy, "policy");
         String id = requireScopeId(scopeId);
+        Path dir = historyDir.toAbsolutePath().normalize();
+        PathAccessPolicy access = PathAccessPolicy.current();
         Open existing = stores.get(id);
         if (existing != null) {
-            return existing.store();
+            if (!existing.directory().equals(dir) || !existing.store().policy().equals(policy)) {
+                throw new IllegalArgumentException("History scope is already open with a different directory or policy: " + id);
+            }
+            if (!access.requiresExistingRoot()) {
+                existing.background().set(access);
+                return existing.store();
+            }
+            requireExistingHistory(dir, access);
+            if (existing.database() != null) {
+                requirePrepared(existing.database());
+                return existing.store();
+            }
         }
-        Path dir = historyDir.toAbsolutePath().normalize();
-        Open opened = open(id, dir, policy);
+        Open opened = open(id, dir, policy, access);
         stores.put(id, opened);
         return opened.store();
     }
 
-    private Open open(String scopeId, Path dir, HistoryPolicy policy) {
-        try {
-            Files.createDirectories(dir);
-            writeGitignore(dir);
-        } catch (IOException | UncheckedIOException e) {
-            LOG.warn("history.open.dirFailed scope={} dir={}", scopeId, dir, e);
-            return unavailable(scopeId, policy, HistoryUnavailableReason.DIRECTORY_UNAVAILABLE);
+    private Open open(String scopeId, Path dir, HistoryPolicy policy, PathAccessPolicy access) {
+        if (access.requiresExistingRoot()) {
+            requireExistingHistory(dir, access);
+        } else {
+            try {
+                Files.createDirectories(dir);
+                writeGitignore(dir);
+            } catch (IOException | UncheckedIOException e) {
+                LOG.warn("history.open.dirFailed scope={} dir={}", scopeId, dir, e);
+                return unavailable(scopeId, dir, policy, HistoryUnavailableReason.DIRECTORY_UNAVAILABLE);
+            }
         }
         DatabaseHandle database;
         try {
             database = openDatabase(scopeId, dir);
         } catch (StorageException first) {
+            if (access.requiresExistingRoot()) throw first;
             if (!looksCorrupt(first)) {
                 // A full disk or network I/O error leaves the database intact; quarantining it would hide all history.
                 LOG.warn("history.open.unavailable scope={} dir={}", scopeId, dir, first);
-                return unavailable(scopeId, policy, HistoryUnavailableReason.TEMPORARILY_UNAVAILABLE);
+                return unavailable(scopeId, dir, policy, HistoryUnavailableReason.TEMPORARILY_UNAVAILABLE);
             }
             LOG.warn("history.open.rebuild scope={} dir={}", scopeId, dir, first);
             quarantineDatabaseFiles(dir);
@@ -135,15 +156,34 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
                 database = openDatabase(scopeId, dir);
             } catch (StorageException second) {
                 LOG.warn("history.open.failed scope={} dir={}", scopeId, dir, second);
-                return unavailable(scopeId, policy, HistoryUnavailableReason.OPEN_FAILED);
+                return unavailable(scopeId, dir, policy, HistoryUnavailableReason.OPEN_FAILED);
             }
         }
         reportStaleSchema(dir, database);
         LocalHistoryStore store = new SqliteLocalHistoryStore(scopeId, database,
                 new HistoryObjectStore(dir.resolve("objects")), policy, executor, clock);
-        ScheduledFuture<?> maintenance = scheduler.scheduleWithFixedDelay(() -> maintain(store),
+        var background = new AtomicReference<>(access);
+        ScheduledFuture<?> maintenance = scheduler.scheduleWithFixedDelay(() -> maintain(store, background.get()),
                 FIRST_MAINTENANCE.toMillis(), MAINTENANCE_PERIOD.toMillis(), TimeUnit.MILLISECONDS);
-        return new Open(store, database, maintenance);
+        return new Open(dir, store, database, maintenance, background);
+    }
+
+    private static void requireExistingHistory(Path dir, PathAccessPolicy access) {
+        try {
+            access.checkAccess(dir);
+        } catch (IOException unavailable) {
+            throw new StorageException("History root is unavailable", unavailable);
+        }
+        if (!Files.isDirectory(dir) || !Files.isRegularFile(dir.resolve(DATABASE_NAME + ".sqlite"))) {
+            throw new StorageException("Existing history database is unavailable: " + dir);
+        }
+    }
+
+    private static void requirePrepared(DatabaseHandle database) {
+        database.read(session -> {
+            HistorySchema.requirePrepared(session);
+            return null;
+        });
     }
 
     /**
@@ -163,8 +203,9 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         }
     }
 
-    private static Open unavailable(String scopeId, HistoryPolicy policy, HistoryUnavailableReason reason) {
-        return new Open(new NoopHistoryStore(scopeId, policy, reason), null, null);
+    private static Open unavailable(String scopeId, Path dir, HistoryPolicy policy, HistoryUnavailableReason reason) {
+        return new Open(dir, new NoopHistoryStore(scopeId, policy, reason), null, null,
+                new AtomicReference<>(PathAccessPolicy.current()));
     }
 
     private DatabaseHandle openDatabase(String scopeId, Path dir) {
@@ -175,7 +216,17 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         for (DatabaseMigration migration : HistorySchema.migrations()) {
             builder.migration(migration);
         }
-        return databases.get().open(builder.build());
+        DatabaseService storage = databases.get();
+        DatabaseDescriptor descriptor = builder.build();
+        DatabaseHandle prior = storage.findOpen(descriptor.id()).orElse(null);
+        DatabaseHandle opened = storage.open(descriptor);
+        try {
+            if (PathAccessPolicy.current().requiresExistingRoot()) requirePrepared(opened);
+            return opened;
+        } catch (RuntimeException | Error failure) {
+            if (opened != prior) Disposer.dispose(opened);
+            throw failure;
+        }
     }
 
     /**
@@ -230,8 +281,8 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         }
     }
 
-    private void maintain(LocalHistoryStore store) {
-        try {
+    private void maintain(LocalHistoryStore store, PathAccessPolicy access) {
+        try (var scope = access.enter()) {
             store.maintain();
         } catch (RuntimeException failure) {
             if (Cancellation.isCancellation(failure)) {
@@ -248,6 +299,11 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
             return Optional.empty();
         }
         Open open = stores.get(scopeId);
+        if (open != null && PathAccessPolicy.current().requiresExistingRoot()) {
+            requireExistingHistory(open.directory(), PathAccessPolicy.current());
+            if (open.database() == null) throw new StorageException("History is unavailable: " + scopeId);
+            requirePrepared(open.database());
+        }
         return open == null ? Optional.empty() : Optional.of(open.store());
     }
 
@@ -276,7 +332,7 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         if (!pendingBudget.isZero()) {
             open.store().awaitPending(pendingBudget);
         }
-        try {
+        try (var scope = open.background().get().enter()) {
             open.store().sealAll();
         } catch (RuntimeException failure) {
             LOG.warn("history.close.sealFailed scope={}", open.store().scopeId(), failure);

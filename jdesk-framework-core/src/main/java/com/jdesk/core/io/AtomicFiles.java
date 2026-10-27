@@ -113,7 +113,7 @@ public final class AtomicFiles {
         }
     }
 
-    /** Atomically writes {@code target}, creating missing parent directories. */
+    /** Atomically writes the target; strict path scopes require an existing parent, otherwise missing parents are created. */
     public static void write(Path target, byte[] bytes) throws IOException {
         write(target, bytes, null);
     }
@@ -125,13 +125,18 @@ public final class AtomicFiles {
     public static void write(Path target, byte[] bytes, BeforeReplace beforeReplace) throws IOException {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(bytes, "bytes");
-        Files.createDirectories(parentOf(target));
+        PathAccessPolicy access = PathAccessPolicy.current();
+        access.checkAccess(target);
+        if (!access.requiresExistingRoot()) {
+            Files.createDirectories(parentOf(target));
+        }
         Path temp = createTempBeside(target);
         try {
             writeAndForce(temp, bytes);
             if (beforeReplace != null) {
                 beforeReplace.check();
             }
+            access.checkAccess(target);
             keepCreationTime(target, temp);
             moveIntoPlace(temp, target, true);
         } finally {
