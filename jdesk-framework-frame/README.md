@@ -19,6 +19,7 @@
 | `com.jdesk.frame.swing` | `SwingUiDispatcher`，集中处理 EDT 调度和断言。 |
 | `com.jdesk.frame.webview` | `WebViewService`、`JdfWebView` 和可配置 JCEF/JxBrowser 后端，提供可选加载的浏览器视图能力。 |
 | `com.jdesk.frame.update` | `UpdateService`、`UpdateServiceProvider`、`UpdateServices`、`UpdateView`、`UpdateHost`，可以缺省的自我更新扩展点，框架本身不带实现。 |
+| `com.jdesk.frame.startup` | `LoginStartService`、`LoginStartServiceProvider`、`LoginStartServices`，可以缺省的「用户登录时启动应用」扩展点，框架本身不带实现。 |
 | `com.jdesk.frame.storage` | `DatabaseService`、`DatabaseHandle`、`DatabaseSession`、迁移、生命周期和通用 SQLite 数据库资源入口。 |
 | `com.jdesk.frame.storage.dao` | `EntityDao`、`Repository`、`RowMapper`、`TypeConverter` 和基础实体 CRUD。 |
 | `com.jdesk.frame.storage.entity` | `@Table`、`@Column`、`@Id`、`@Index`、`@Transient`、`@SoftReference` 和 record entity schema 解析。 |
@@ -244,6 +245,36 @@ public final class MyUpdateProvider implements UpdateServiceProvider {
 界面文字都由服务经 `UpdateView` 给出（菜单项、设置页标题、自动下载开关的文字和提示、立即检查按钮、状态行、渠道名），已经按当前语言译好。框架不带更新文字，也不翻译它们，应用只管显示。
 
 `UpdateHost` 是应用交给服务的能力：`runAfterExit(program, arguments, exitNow)` 登记一条应用退出之后运行的命令（`program` 用绝对路径，`exitNow` 为 true 时同时请求应用立即退出），`clearRunAfterExit()` 撤回它。
+
+## LoginStartService（可选的登录时启动扩展点）
+
+`LoginStartService`（`com.jdesk.frame.startup`）是一个可以缺省的扩展点：框架只定义接口，不带实现，也不带任何文字。它告诉应用用户登录时会不会启动本应用，并能把它打开或关掉。构建里没有实现时，`LoginStartServices.create` 给出 `Optional.empty()`，应用据此不放对应的设置项。
+
+实现方在自己的 jar 里提供 `LoginStartServiceProvider`，并把类名写进 `META-INF/services/com.jdesk.frame.startup.LoginStartServiceProvider`：
+
+```java
+public final class MyLoginStartProvider implements LoginStartServiceProvider {
+    @Override
+    public Optional<LoginStartService> create(Application application) {
+        // 这个构建支持登录时启动就给出服务，否则给 Optional.empty()；这里只判断，不做事
+        return supportsLoginStart() ? Optional.of(new MyLoginStartService()) : Optional.empty();
+    }
+}
+```
+
+应用在启动时调用一次 `LoginStartServices.create(application)`：
+
+- 用 `ServiceLoader` 在应用类加载器（`Application#getApplicationClassLoader`）上查找，没有应用时用框架自己的类加载器。
+- 第一个给出服务的提供者胜出，后面的不再询问。日志打一行 `loginStart.service.selected provider=<类名>`；没有提供者，或者提供者都给了 `empty`，打 `loginStart.service.none`。
+- 提供者在 `ServiceLoader` 阶段失败，或者 `create` 抛异常或链接错误、返回 `null`，记 WARN 并跳过它，接着问下一个，不影响启动。读不出的提供者配置不会让查找死循环：失败几次后放弃，按没有实现处理。
+- 调用方拥有返回的服务：`LoginStartService` 实现 `Disposable`，要用 `Disposer.register` 挂到自己的生命周期下。
+
+`LoginStartService` 的线程约定：
+
+| 方法 | 线程 |
+|---|---|
+| `isEnabled()` | 会阻塞，可能抛 `IOException`；不要在 EDT 上调 |
+| `setEnabled(boolean)` | 会阻塞，可能抛 `IOException`；不要在 EDT 上调；返回做完以后读回来的状态，应用以它为准刷新界面 |
 
 ## ApplicationActivity 和 PostStartupActivity
 
