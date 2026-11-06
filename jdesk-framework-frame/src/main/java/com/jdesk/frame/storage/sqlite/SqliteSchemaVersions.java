@@ -49,12 +49,22 @@ public final class SqliteSchemaVersions {
     }
 
     /** Opens a read-only connection that sees the {@code -wal} file and writes nothing to the main file. */
-    static Connection openReadOnly(Path database) throws SQLException {
+    public static Connection openReadOnly(Path database) throws SQLException {
         SQLiteConfig config = new SQLiteConfig();
         config.setReadOnly(true);
         config.setBusyTimeout(READ_BUSY_TIMEOUT_MILLIS);
         // Don't add immutable=1: SQLite would ignore the -wal file and report a crashed database as older than it is.
         return DriverManager.getConnection("jdbc:sqlite:" + sqliteAddress(database.toUri()), config.toProperties());
+    }
+
+    /** Returns the driver's {@code backup to} command for a target file, safe for quotes and non-ASCII names. */
+    public static String backupCommand(Path target) {
+        return backupCommand(target.toUri());
+    }
+
+    /** Must keep the target a URI: the driver's command parser has no escape for {@code "}. */
+    static String backupCommand(URI target) {
+        return "backup to \"" + sqliteAddress(target) + "\"";
     }
 
     /**

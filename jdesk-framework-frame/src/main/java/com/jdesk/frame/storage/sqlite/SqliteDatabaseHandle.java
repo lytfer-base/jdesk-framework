@@ -20,7 +20,6 @@ import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteOpenMode;
 
 import javax.swing.SwingUtilities;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.io.IOException;
@@ -143,7 +142,7 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
             // Must start clean: SQLite would open a file left by a crash as a database and fail on it.
             Files.deleteIfExists(temporary);
             try (Statement statement = source.createStatement()) {
-                statement.executeUpdate(backupCommand(temporary.toUri()));
+                statement.executeUpdate(SqliteSchemaVersions.backupCommand(temporary));
             }
             AtomicFiles.moveIntoPlace(temporary, directory.resolve(path.getFileName()), true);
             copyLeft = true;
@@ -151,11 +150,6 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
             deleteTemporary(temporary, failure);
             throw new PreMigrationCopyException(id(), directory, failure);
         }
-    }
-
-    /** Returns the driver's backup command. Must keep the target a URI: its parser has no escape for {@code "}. */
-    static String backupCommand(URI target) {
-        return "backup to \"" + SqliteSchemaVersions.sqliteAddress(target) + "\"";
     }
 
     private static void deleteTemporary(Path temporary, Exception failure) {

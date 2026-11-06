@@ -256,7 +256,7 @@ class SqlitePreMigrationCopyTest {
     void backupCommandKeepsQuotesInThePath() throws Exception {
         URI target = new URI("file", null, "/a \"b\" 'c'/x.sqlite.tmp", null);
 
-        String parsed = ExtendedCommand.BackupCommand.parse(SqliteDatabaseHandle.backupCommand(target)).destFile;
+        String parsed = ExtendedCommand.BackupCommand.parse(SqliteSchemaVersions.backupCommand(target)).destFile;
 
         assertEquals(target, URI.create(parsed));
     }
