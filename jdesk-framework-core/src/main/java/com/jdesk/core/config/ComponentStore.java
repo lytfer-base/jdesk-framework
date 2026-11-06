@@ -5,6 +5,7 @@ import com.jdesk.core.startup.StartupSpan;
 import com.jdesk.core.startup.StartupTrace;
 import com.jdesk.core.startup.StartupTraces;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,7 @@ public class ComponentStore {
     private static XmlMapper stateMapper() {
         return XmlMapper.builder()
                 .serializationInclusion(JsonInclude.Include.NON_NULL)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .build();
     }
 

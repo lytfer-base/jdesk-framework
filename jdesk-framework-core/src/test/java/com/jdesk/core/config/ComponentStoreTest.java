@@ -239,6 +239,79 @@ class ComponentStoreTest {
         assertEquals("default", reloaded.state.value);
     }
 
+    /** A field this version doesn't know is skipped, and the known fields keep their saved values. */
+    @Test
+    void unknownFieldIsSkippedAndOtherSettingsKept() throws Exception {
+        Path stateFile = configDir.resolve("multi.xml");
+        Files.writeString(stateFile,
+                "<MultiState><name>saved</name><count>7</count><futureField>x</futureField></MultiState>");
+
+        ComponentStore store = new ComponentStore(configDir);
+        MultiComponent component = new MultiComponent();
+        store.register(component);
+
+        assertEquals("saved", component.state.name);
+        assertEquals(7, component.state.count);
+        assertFalse(Files.exists(configDir.resolve("multi.xml.corrupt")), "an unknown field is not corruption");
+        assertTrue(Files.isRegularFile(stateFile), "the original file must stay in place");
+    }
+
+    /** A field missing from the file keeps the class default, and the other fields keep their saved values. */
+    @Test
+    void missingFieldUsesDefaultAndOtherSettingsKept() throws Exception {
+        Files.writeString(configDir.resolve("multi.xml"), "<MultiState><name>saved</name></MultiState>");
+
+        ComponentStore store = new ComponentStore(configDir);
+        MultiComponent component = new MultiComponent();
+        store.register(component);
+
+        assertEquals("saved", component.state.name);
+        assertEquals(3, component.state.count);
+        assertFalse(Files.exists(configDir.resolve("multi.xml.corrupt")));
+    }
+
+    /** A field whose type no longer matches still discards the whole file: field types must never change. */
+    @Test
+    void wrongTypeStillFallsBackToDefaults() throws Exception {
+        Files.writeString(configDir.resolve("multi.xml"),
+                "<MultiState><name>saved</name><count>not-a-number</count></MultiState>");
+
+        ComponentStore store = new ComponentStore(configDir);
+        MultiComponent component = new MultiComponent();
+        store.register(component);
+
+        assertEquals("default", component.state.name);
+        assertEquals(3, component.state.count);
+        assertTrue(Files.isRegularFile(configDir.resolve("multi.xml.corrupt")));
+    }
+
+    @State(name = "MultiComponent", storages = @Storage("multi.xml"))
+    public static final class MultiComponent implements PersistentStateComponent<MultiState> {
+        MultiState state;
+
+        @Override
+        public MultiState getState() {
+            return state;
+        }
+
+        @Override
+        public void loadState(MultiState state) {
+            this.state = state;
+        }
+
+        @Override
+        public MultiState getDefaultState() {
+            MultiState defaults = new MultiState();
+            defaults.name = "default";
+            return defaults;
+        }
+    }
+
+    public static final class MultiState {
+        public String name = "unset";
+        public int count = 3;
+    }
+
     @State(name = "BrokenStateComponent", storages = @Storage("broken.xml"))
     public static final class BrokenStateComponent implements PersistentStateComponent<TestState> {
         @Override
