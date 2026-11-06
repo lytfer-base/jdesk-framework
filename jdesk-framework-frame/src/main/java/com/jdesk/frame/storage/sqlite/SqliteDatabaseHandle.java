@@ -1,5 +1,6 @@
 package com.jdesk.frame.storage.sqlite;
 
+import com.jdesk.core.io.AtomicFiles;
 import com.jdesk.core.io.Cancellation;
 import com.jdesk.core.io.PathAccessPolicy;
 import com.jdesk.frame.storage.DatabaseCallback;
@@ -22,7 +23,6 @@ import javax.swing.SwingUtilities;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -142,8 +142,7 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
             try (Statement statement = source.createStatement()) {
                 statement.executeUpdate(backupCommand(temporary.toUri()));
             }
-            Files.move(temporary, directory.resolve(path.getFileName()), StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
+            AtomicFiles.moveIntoPlace(temporary, directory.resolve(path.getFileName()), true);
             copyLeft = true;
         } catch (IOException | SQLException | RuntimeException failure) {
             deleteTemporary(temporary, failure);

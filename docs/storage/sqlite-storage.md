@@ -366,7 +366,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 - 全新的库不留：`initialize` 时文件不在或长度为 0，这次打开之后的 `migrate` 也不留。
 - 没有待跑的迁移就什么都不写，副本文件夹也不建，所以放在只读文件夹或移动盘上的库照常能开。不带 migration 的 descriptor 没有待跑的 `main`。
 
-**只留最新一份。** 副本先写到 `<库文件名>.tmp`，写完用一次原子改名换掉上一份，写到一半失败不会把上一份弄坏。上次崩溃留下的临时文件，开始前先删掉。
+**只留最新一份。** 副本先写到 `<库文件名>.tmp`，写完用一次原子改名换掉上一份，写到一半失败不会把上一份弄坏。刚写完的文件可能被杀毒软件或索引程序占着，所以改名走 `AtomicFiles.moveIntoPlace`，碰上 Windows 的共享冲突会短暂重试。上次崩溃留下的临时文件，开始前先删掉。
 
 **留不下就不迁移。** 文件夹建不出来、磁盘满、改名失败，都抛 `PreMigrationCopyException`（`StorageException` 的子类），带库 id 和副本文件夹，临时文件已经删掉，这次的迁移一条都没跑。`initialize` 失败时没有留下句柄，问题解决后可以再 `open`；版本读得出来的库，这时主文件一个字节都没变。`migrate` 失败时句柄还能用，再调一次会重新留副本。在 `PathAccessPolicy.existingRoot(root)` 的作用域里，副本文件夹也要在 `root` 里面，不会重建已经不在的目录。
 

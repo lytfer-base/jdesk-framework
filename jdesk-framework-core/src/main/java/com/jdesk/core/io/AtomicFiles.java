@@ -195,11 +195,11 @@ public final class AtomicFiles {
     }
 
     /**
-     * Moves the temp file into place, retrying briefly while the target or the temp file is held by another program.
-     * Throws FileAlreadyExistsException if {@code replace} is false and the target exists; an interrupted backoff keeps
-     * waiting inside a masked section and otherwise throws InterruptedIOException, keeping the flag.
+     * Moves {@code temp}, which must sit in {@code target}'s directory, into place, retrying transient Windows sharing
+     * failures. Throws FileAlreadyExistsException if {@code replace} is false and the target exists; an interrupted
+     * backoff keeps waiting inside a masked section and otherwise throws InterruptedIOException, keeping the flag.
      */
-    static void moveIntoPlace(Path temp, Path target, boolean replace) throws IOException {
+    public static void moveIntoPlace(Path temp, Path target, boolean replace) throws IOException {
         long backoffMillis = 1;
         for (int attempt = 0; ; attempt++) {
             try {
