@@ -7,6 +7,7 @@ import com.jdesk.frame.storage.DatabaseDescriptor;
 import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseMigration;
 import com.jdesk.frame.storage.DatabaseOptions;
+import com.jdesk.frame.storage.DatabaseTooNewException;
 import com.jdesk.frame.storage.StorageException;
 import com.jdesk.frame.storage.TransactionCallback;
 import com.jdesk.frame.storage.dao.EntityDao;
@@ -24,6 +25,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.Callable;
@@ -77,8 +79,14 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         this.readerExecutor = Executors.newCachedThreadPool(threadFactory("jdesk-sqlite-reader-" + descriptor.id()));
     }
 
-    /** Applies the descriptor's migrations and prepares its entity tables and indexes; call it once before use. */
+    /**
+     * Applies the descriptor's migrations and prepares its entity tables and indexes; call it once before use.
+     *
+     * @throws DatabaseTooNewException if a declared namespace is newer than the descriptor; the file stays unchanged
+     */
     void initialize() {
+        // Must stay before openConnection(): its pragmas and the migration runner both write to the file.
+        rejectIfTooNew(readStoredVersions(), descriptor.declaredVersions());
         try (Connection connection = openConnection()) {
             new SqliteMigrationRunner(SqliteMigrationRunner.MAIN_NAMESPACE)
                     .run(connection, descriptor.migrations());
@@ -90,9 +98,27 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         }
     }
 
+    private Map<String, Integer> readStoredVersions() {
+        try {
+            return SqliteSchemaVersions.read(path);
+        } catch (StorageException unreadable) {
+            // Don't treat an unreadable file as too new: the normal open decides what happens to it.
+            LOG.warn("storage.open.versionsUnreadable database={} (continuing with the normal open)",
+                    descriptor.id(), unreadable);
+            return Map.of();
+        }
+    }
+
+    private void rejectIfTooNew(Map<String, Integer> stored, Map<String, Integer> declared) {
+        SqliteSchemaVersions.findTooNew(stored, declared).ifPresent(tooNew -> {
+            throw new DatabaseTooNewException(descriptor.id(), tooNew.namespace(), tooNew.databaseVersion(),
+                    tooNew.supportedVersion());
+        });
+    }
+
     /**
-     * Runs a component's migrations on the serialized writer executor, so schema
-     * work cannot interleave with concurrent writes to the same file.
+     * Runs a component's migrations on the serialized writer executor, so schema work cannot interleave with
+     * concurrent writes. Throws {@link DatabaseTooNewException} if the stored version is above every migration's.
      */
     @Override
     public void migrate(String namespace, List<DatabaseMigration> migrations) {
@@ -109,6 +135,8 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         rejectNestedWrite();
         await(writerExecutor.submit(contextualCall(() -> {
             try (Connection connection = openConnection()) {
+                int highest = declared.stream().mapToInt(DatabaseMigration::version).max().orElse(0);
+                rejectIfTooNew(SqliteSchemaVersions.read(connection), Map.of(cleaned, highest));
                 new SqliteMigrationRunner(cleaned).run(connection, declared);
                 return null;
             } catch (SQLException e) {

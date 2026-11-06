@@ -316,6 +316,35 @@ DatabaseMigration createNotes = DatabaseMigration.of(1, "create-notes", session 
 
 复杂 schema 变更，例如删除列、改列类型、拆表、合表、数据搬迁，应写显式 migration，不应依赖注解自动推断。
 
+### 比程序新的库
+
+用户可能用旧版程序打开新版程序写过的库。旧程序不认识新的表结构，接着往里写会把数据写坏，所以框架在动文件之前先比版本，库比程序新就拒绝。
+
+`open` 在迁移之前先用只读连接读 `jdesk_schema_version`，和 `descriptor.declaredVersions()` 比。有一条命名空间的库版本比声明的高，就抛 `DatabaseTooNewException`（`StorageException` 的子类），带库 id、命名空间、库版本和程序支持的版本。这时主文件一个字节都没变，也没有留下句柄，换掉文件后可以再 `open`。
+
+这一步必须在普通连接之前：普通连接一打开就执行 `PRAGMA journal_mode=WAL`，迁移器还会建元数据表，这两样都会改文件。
+
+**只查声明过的命名空间。** `declaredVersions()` 里的 `main` 是 migration 的最高版本，其他命名空间用 `knownNamespace` 声明：
+
+```java
+DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
+        .owner(DatabaseOwner.application("myapp"))
+        .migration(createLibrary)
+        .knownNamespace("myapp.attachments", 3)
+        .build();
+```
+
+- 组件往往在库打开很久之后才调 `migrate`，那时普通连接已经动过文件。想在动库之前就挡住组件的命名空间，要把它写进 descriptor。
+- 没声明的命名空间开库时不比。新版程序加一组独立的表、用新的命名空间时，旧程序照常能开。旧程序碰了这组表会出问题的话，就要同时升 `main` 或已声明命名空间的版本。
+- `migrate(namespace, migrations)` 跑之前也比一次，库里这条命名空间的版本比 `migrations` 的最高版本高，抛同样的异常。这时文件已经被普通连接打开过，只是迁移没有跑。
+- 版本 0 表示没有声明，不参与比较：不带 migration 的 descriptor 能开任何版本的库，`migrate` 传空列表也不会被拒绝。这类 descriptor 不做版本管理，也就说不上比库旧。`knownNamespace` 的版本必须为正。
+
+**版本读不出来不算太新。** 文件不是 SQLite、损坏或者被占着时，记一条 WARN，按没有版本往下走，这个库怎么处理由普通打开决定。文件不在、没有 `jdesk_schema_version` 表，都算没有版本。网络共享的 UNC 路径目前也走这条路：`toUri()` 写出的地址 SQLite 不接受，这种路径上版本检查不起作用。
+
+**读版本要算上 `-wal`。** 崩溃留下 `-wal` 的库，新版本可能只在 WAL 里，只看主文件会把它当成旧库。所以连接不能带 `immutable=1`。只读连接不会做 checkpoint，`-wal` 的内容不会丢；WAL 模式的库读完后旁边可能多出 `-shm` 和空的 `-wal`，下一次普通打开关闭时会清掉。JDBC 地址用 `path.toUri().toASCIIString()`，路径里的中文、空格、`#`、`%` 才不会出错。
+
+`SqliteSchemaVersions.read(path)` 和 `findTooNew(stored, declared)` 是公开的，应用要在开库之前做检查时直接用它们，不用自己再写一份。
+
 ## Entity 注解和基础 DAO
 
 第一版支持 Java record entity。
@@ -495,6 +524,7 @@ public record NoteTagEntity(
 - WAL、busy timeout、默认关闭 foreign key。
 - migration version 和 migration log。
 - migration 失败 rollback 和错误记录。
+- 比程序新的库在动文件之前拒绝。
 - Java record entity 注解。
 - 基础 CRUD DAO。
 - `RowMapper` 和受控 `DatabaseRow`。

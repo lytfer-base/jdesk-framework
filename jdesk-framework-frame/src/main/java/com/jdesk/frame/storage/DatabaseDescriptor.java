@@ -2,7 +2,10 @@ package com.jdesk.frame.storage;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -16,6 +19,8 @@ import java.util.regex.Pattern;
 public final class DatabaseDescriptor {
 
     private static final Pattern DATABASE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
+    /** Must match the namespace the storage backend records this descriptor's own migrations under. */
+    private static final String MAIN_NAMESPACE = "main";
 
     private final String id;
     private final DatabaseOwner owner;
@@ -24,6 +29,7 @@ public final class DatabaseDescriptor {
     private final List<DatabaseMigration> migrations;
     private final List<Class<?>> entities;
     private final Path location;
+    private final Map<String, Integer> declaredVersions;
 
     private DatabaseDescriptor(Builder builder) {
         this.id = validateId(builder.id);
@@ -33,6 +39,10 @@ public final class DatabaseDescriptor {
         this.migrations = List.copyOf(builder.migrations);
         this.entities = List.copyOf(builder.entities);
         this.location = validateLocation(builder.location);
+        Map<String, Integer> versions = new LinkedHashMap<>();
+        versions.put(MAIN_NAMESPACE, migrations.stream().mapToInt(DatabaseMigration::version).max().orElse(0));
+        versions.putAll(builder.knownNamespaces);
+        this.declaredVersions = Collections.unmodifiableMap(versions);
     }
 
     /**
@@ -100,6 +110,14 @@ public final class DatabaseDescriptor {
         return location;
     }
 
+    /**
+     * Returns the highest supported version per schema namespace: {@code main} first, holding the highest migration
+     * version (0 without migrations), then the namespaces added with {@link Builder#knownNamespace(String, int)}.
+     */
+    public Map<String, Integer> declaredVersions() {
+        return declaredVersions;
+    }
+
     private static String validateId(String value) {
         String cleaned = Objects.requireNonNull(value, "id").trim();
         if (!DATABASE_ID.matcher(cleaned).matches()) {
@@ -131,6 +149,7 @@ public final class DatabaseDescriptor {
         private final List<DatabaseMigration> migrations = new ArrayList<>();
         private final List<Class<?>> entities = new ArrayList<>();
         private Path location;
+        private final Map<String, Integer> knownNamespaces = new LinkedHashMap<>();
 
         private Builder(String id) {
             this.id = id;
@@ -185,6 +204,22 @@ public final class DatabaseDescriptor {
          */
         public Builder location(Path location) {
             this.location = location;
+            return this;
+        }
+
+        /**
+         * Declares the highest version the program supports for a component namespace, so a newer database is refused
+         * at open, before the component migrates it. A blank or reserved name or a non-positive version throws.
+         */
+        public Builder knownNamespace(String namespace, int highestVersion) {
+            String cleaned = Objects.requireNonNull(namespace, "namespace").trim();
+            if (cleaned.isEmpty() || MAIN_NAMESPACE.equals(cleaned)) {
+                throw new StorageException("Invalid known namespace: " + namespace);
+            }
+            if (highestVersion <= 0) {
+                throw new StorageException("Invalid highest version " + highestVersion + " for namespace " + cleaned);
+            }
+            this.knownNamespaces.put(cleaned, highestVersion);
             return this;
         }
 
