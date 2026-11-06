@@ -22,8 +22,10 @@ import com.jdesk.frame.storage.DatabaseDescriptor;
 import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseService;
 import com.jdesk.frame.storage.DatabaseTooNewException;
+import com.jdesk.frame.storage.PreMigrationCopyException;
 import com.jdesk.frame.storage.StorageException;
 import com.jdesk.frame.storage.sqlite.SqliteDatabaseService;
+import com.jdesk.frame.storage.sqlite.SqliteSchemaVersions;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -103,6 +105,61 @@ class DefaultLocalHistoryServiceTest {
                     .filter(name -> name.startsWith("history.sqlite")).toList(), "nothing is set aside");
         }
         assertTrue(service.findOpenStore("scope.new").isEmpty());
+    }
+
+    @Test
+    void pendingHistoryMigrationLeavesCopy() throws Exception {
+        Path historyDir = oldHistory();
+        Path copies = dir.resolve("copies");
+
+        LocalHistoryStore store = service.openStore("scope.old", historyDir, HistoryPolicy.defaults(), copies);
+
+        assertTrue(store.stats().available());
+        Path copy = copies.resolve("history.sqlite");
+        assertTrue(Files.isRegularFile(copy));
+        assertEquals(Map.of(), SqliteSchemaVersions.read(copy), "the copy is from before the first migration");
+        assertEquals(Map.of("main", 1), SqliteSchemaVersions.read(historyDir.resolve("history.sqlite")));
+    }
+
+    @Test
+    void copyFailureIsRefusedNotQuarantined() throws Exception {
+        Path historyDir = oldHistory();
+        Path database = historyDir.resolve("history.sqlite");
+        byte[] before = Files.readAllBytes(database);
+        Path blocked = dir.resolve("blocked");
+        Files.writeString(blocked, "a file where the copy folder should be");
+
+        PreMigrationCopyException failure = assertThrows(PreMigrationCopyException.class,
+                () -> service.openStore("scope.old", historyDir, HistoryPolicy.defaults(), blocked));
+
+        assertEquals(blocked, failure.copyDir());
+        assertArrayEquals(before, Files.readAllBytes(database));
+        try (Stream<Path> files = Files.list(historyDir)) {
+            assertEquals(List.of("history.sqlite"), files.map(file -> file.getFileName().toString())
+                    .filter(name -> name.startsWith("history.sqlite")).toList(), "nothing is set aside");
+        }
+        assertTrue(service.findOpenStore("scope.old").isEmpty());
+    }
+
+    @Test
+    void copyFolderIsNotPartOfTheSameStoreCheck() {
+        Path historyDir = dir.resolve("history");
+        LocalHistoryStore store = service.openStore("scope.a", historyDir, HistoryPolicy.defaults(),
+                dir.resolve("one"));
+
+        assertTrue(service.openStore("scope.a", historyDir, HistoryPolicy.defaults(), dir.resolve("two")) == store);
+        assertTrue(service.openStore("scope.a", historyDir, HistoryPolicy.defaults()) == store);
+    }
+
+    /** Creates a history folder whose database predates {@code jdesk_schema_version}, on a rollback journal. */
+    private Path oldHistory() throws Exception {
+        Path historyDir = Files.createDirectories(dir.resolve("history"));
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + historyDir.resolve("history.sqlite"));
+             Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA journal_mode=delete");
+            statement.execute("create table old_notes (body text)");
+        }
+        return historyDir;
     }
 
     @Test

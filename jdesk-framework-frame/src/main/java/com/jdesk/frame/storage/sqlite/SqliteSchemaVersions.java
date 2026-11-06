@@ -38,16 +38,20 @@ public final class SqliteSchemaVersions {
         if (!Files.isRegularFile(database)) {
             return Map.of();
         }
-        SQLiteConfig config = new SQLiteConfig();
-        config.setReadOnly(true);
-        config.setBusyTimeout(READ_BUSY_TIMEOUT_MILLIS);
-        // Don't add immutable=1: SQLite would ignore the -wal file and report a crashed database as older than it is.
-        String url = "jdbc:sqlite:" + sqliteAddress(database.toUri());
-        try (Connection connection = DriverManager.getConnection(url, config.toProperties())) {
+        try (Connection connection = openReadOnly(database)) {
             return read(connection);
         } catch (SQLException e) {
             throw new StorageException("Failed to read schema versions: " + database, e);
         }
+    }
+
+    /** Opens a read-only connection that sees the {@code -wal} file and writes nothing to the main file. */
+    static Connection openReadOnly(Path database) throws SQLException {
+        SQLiteConfig config = new SQLiteConfig();
+        config.setReadOnly(true);
+        config.setBusyTimeout(READ_BUSY_TIMEOUT_MILLIS);
+        // Don't add immutable=1: SQLite would ignore the -wal file and report a crashed database as older than it is.
+        return DriverManager.getConnection("jdbc:sqlite:" + sqliteAddress(database.toUri()), config.toProperties());
     }
 
     /** Returns the SQLite address of a file URI, moving a UNC host into the path: SQLite rejects a URI authority. */

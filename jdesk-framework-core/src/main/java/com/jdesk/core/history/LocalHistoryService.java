@@ -16,6 +16,16 @@ public interface LocalHistoryService {
      */
     LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy);
 
+    /**
+     * Opens like the three-argument form and, if the implementation supports it, leaves a copy of the history database
+     * in {@code preMigrationCopyDir} before its pending migrations, throwing if it can't. {@code null} leaves none.
+     * The folder doesn't count when deciding whether a scope is already open with the same directory and policy.
+     */
+    default LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy,
+                                        Path preMigrationCopyDir) {
+        return openStore(scopeId, historyDir, policy);
+    }
+
     Optional<LocalHistoryStore> findOpenStore(String scopeId);
 
     /** Seals all head versions and closes the store; returns false if it isn't open. */

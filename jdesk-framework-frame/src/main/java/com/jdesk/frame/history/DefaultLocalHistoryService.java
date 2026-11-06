@@ -15,6 +15,7 @@ import com.jdesk.frame.storage.DatabaseMigration;
 import com.jdesk.frame.storage.DatabaseOwner;
 import com.jdesk.frame.storage.DatabaseService;
 import com.jdesk.frame.storage.DatabaseTooNewException;
+import com.jdesk.frame.storage.PreMigrationCopyException;
 import com.jdesk.frame.storage.StorageException;
 import javax.swing.SwingUtilities;
 import java.io.IOException;
@@ -102,7 +103,13 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
     }
 
     @Override
-    public synchronized LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy) {
+    public LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy) {
+        return openStore(scopeId, historyDir, policy, null);
+    }
+
+    @Override
+    public synchronized LocalHistoryStore openStore(String scopeId, Path historyDir, HistoryPolicy policy,
+                                                    Path preMigrationCopyDir) {
         checkUsable();
         Objects.requireNonNull(historyDir, "historyDir");
         Objects.requireNonNull(policy, "policy");
@@ -124,7 +131,8 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
                 return existing.store();
             }
         }
-        Open opened = open(id, dir, policy, access);
+        Path copyDir = preMigrationCopyDir == null ? null : preMigrationCopyDir.toAbsolutePath().normalize();
+        Open opened = open(id, dir, policy, access, copyDir);
         stores.put(id, opened);
         return opened.store();
     }
@@ -134,7 +142,7 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         return Map.of("main", HistorySchema.migrations().stream().mapToInt(DatabaseMigration::version).max().orElseThrow());
     }
 
-    private Open open(String scopeId, Path dir, HistoryPolicy policy, PathAccessPolicy access) {
+    private Open open(String scopeId, Path dir, HistoryPolicy policy, PathAccessPolicy access, Path copyDir) {
         if (access.requiresExistingRoot()) {
             requireExistingHistory(dir, access);
         } else {
@@ -148,9 +156,9 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         }
         DatabaseHandle database;
         try {
-            database = openDatabase(scopeId, dir);
-        } catch (DatabaseTooNewException tooNew) {
-            throw tooNew;
+            database = openDatabase(scopeId, dir, copyDir);
+        } catch (DatabaseTooNewException | PreMigrationCopyException refused) {
+            throw refused;
         } catch (StorageException first) {
             if (access.requiresExistingRoot()) throw first;
             if (!looksCorrupt(first)) {
@@ -161,7 +169,7 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
             LOG.warn("history.open.rebuild scope={} dir={}", scopeId, dir, first);
             quarantineDatabaseFiles(dir);
             try {
-                database = openDatabase(scopeId, dir);
+                database = openDatabase(scopeId, dir, copyDir);
             } catch (StorageException second) {
                 LOG.warn("history.open.failed scope={} dir={}", scopeId, dir, second);
                 return unavailable(scopeId, dir, policy, HistoryUnavailableReason.OPEN_FAILED);
@@ -216,11 +224,12 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
                 new AtomicReference<>(PathAccessPolicy.current()));
     }
 
-    private DatabaseHandle openDatabase(String scopeId, Path dir) {
+    private DatabaseHandle openDatabase(String scopeId, Path dir, Path copyDir) {
         DatabaseDescriptor.Builder builder = DatabaseDescriptor.builder("jdesk.history." + sanitize(scopeId))
                 .owner(DatabaseOwner.application("jdesk"))
                 .name(DATABASE_NAME)
-                .location(dir);
+                .location(dir)
+                .preMigrationCopyDir(copyDir);
         for (DatabaseMigration migration : HistorySchema.migrations()) {
             builder.migration(migration);
         }

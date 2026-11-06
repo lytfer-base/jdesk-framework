@@ -31,6 +31,7 @@ public interface DatabaseHandle extends Disposable, AutoCloseable {
      * @param namespace  stable namespace owned by the component; the descriptor's own namespace is rejected
      * @param migrations the component's full migration list, in any order
      * @throws DatabaseTooNewException if the stored version is above every migration's; none of them runs
+     * @throws PreMigrationCopyException if the copy due before the migrations fails; none of them runs
      */
     void migrate(String namespace, List<DatabaseMigration> migrations);
 

@@ -8,6 +8,7 @@ import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseMigration;
 import com.jdesk.frame.storage.DatabaseOptions;
 import com.jdesk.frame.storage.DatabaseTooNewException;
+import com.jdesk.frame.storage.PreMigrationCopyException;
 import com.jdesk.frame.storage.StorageException;
 import com.jdesk.frame.storage.TransactionCallback;
 import com.jdesk.frame.storage.dao.EntityDao;
@@ -18,7 +19,10 @@ import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteOpenMode;
 
 import javax.swing.SwingUtilities;
+import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -27,6 +31,7 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -58,6 +63,8 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     /** The writer thread; the thread factory updates it whenever the executor replaces the thread. */
     private volatile Thread writerThread;
     private volatile boolean disposed;
+    /** Whether this open needs no further copy: one was left, or the database was new. */
+    private volatile boolean copyLeft;
     /** Synchronous reads running on caller threads, which dispose must wait for; guarded by {@link #readsLock}. */
     private int activeReads;
     private final Object readsLock = new Object();
@@ -83,17 +90,88 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
      * Applies the descriptor's migrations and prepares its entity tables and indexes; call it once before use.
      *
      * @throws DatabaseTooNewException if a declared namespace is newer than the descriptor; no migration runs
+     * @throws PreMigrationCopyException if the copy of a database with pending migrations fails; no migration runs
      */
     void initialize() {
         // Must stay before openConnection(): its pragmas and the migration runner both write to the file.
-        rejectIfTooNew(readStoredVersions(), descriptor.declaredVersions());
+        readStoredVersions().ifPresent(stored -> {
+            rejectIfTooNew(stored, descriptor.declaredVersions());
+            leaveCopyBeforeOpening(stored);
+        });
         openAndMigrate();
+    }
+
+    private void leaveCopyBeforeOpening(Map<String, Integer> stored) {
+        if (isFresh()) {
+            copyLeft = true;
+        } else if (copyDue(stored, SqliteMigrationRunner.MAIN_NAMESPACE, highestMainVersion())) {
+            try (Connection connection = SqliteSchemaVersions.openReadOnly(path)) {
+                leaveCopy(connection);
+            } catch (SQLException e) {
+                throw new PreMigrationCopyException(id(), descriptor.preMigrationCopyDir().orElseThrow(), e);
+            }
+        }
+    }
+
+    /** Must answer false when the size can't be read: treating such a file as new would skip its copy. */
+    private boolean isFresh() {
+        try {
+            return !Files.isRegularFile(path) || Files.size(path) == 0;
+        } catch (IOException unreadable) {
+            return false;
+        }
+    }
+
+    private int highestMainVersion() {
+        return descriptor.declaredVersions().get(SqliteMigrationRunner.MAIN_NAMESPACE);
+    }
+
+    private boolean copyDue(Map<String, Integer> stored, String namespace, int highest) {
+        return !copyLeft && descriptor.preMigrationCopyDir().isPresent() && stored.getOrDefault(namespace, 0) < highest;
+    }
+
+    /** Must replace the previous copy in one move: a backup that fails halfway must not cost the copy already there. */
+    private void leaveCopy(Connection source) {
+        Path directory = descriptor.preMigrationCopyDir().orElseThrow();
+        Path temporary = directory.resolve(path.getFileName() + ".tmp");
+        try {
+            // Must keep to the policy: an existing-root scope never recreates a folder that went away.
+            pathAccess().createDirectories(directory);
+            // Must start clean: SQLite would open a file left by a crash as a database and fail on it.
+            Files.deleteIfExists(temporary);
+            try (Statement statement = source.createStatement()) {
+                statement.executeUpdate(backupCommand(temporary.toUri()));
+            }
+            Files.move(temporary, directory.resolve(path.getFileName()), StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+            copyLeft = true;
+        } catch (IOException | SQLException | RuntimeException failure) {
+            deleteTemporary(temporary, failure);
+            throw new PreMigrationCopyException(id(), directory, failure);
+        }
+    }
+
+    /** Returns the driver's backup command. Must keep the target a URI: its parser has no escape for {@code "}. */
+    static String backupCommand(URI target) {
+        return "backup to \"" + SqliteSchemaVersions.sqliteAddress(target) + "\"";
+    }
+
+    private static void deleteTemporary(Path temporary, Exception failure) {
+        try {
+            Files.deleteIfExists(temporary);
+        } catch (IOException | RuntimeException suppressed) {
+            failure.addSuppressed(suppressed);
+        }
     }
 
     private void openAndMigrate() {
         try (Connection connection = openConnection()) {
-            // Must stay before the runner: the check in initialize() continues when it can't read the file.
-            rejectIfTooNew(SqliteSchemaVersions.read(connection), descriptor.declaredVersions());
+            Map<String, Integer> stored = SqliteSchemaVersions.read(connection);
+            // Both must stay before the runner: initialize() skips them when it can't read the file.
+            rejectIfTooNew(stored, descriptor.declaredVersions());
+            if (copyDue(stored, SqliteMigrationRunner.MAIN_NAMESPACE, highestMainVersion())) {
+                leaveCopy(connection);
+            }
             new SqliteMigrationRunner(SqliteMigrationRunner.MAIN_NAMESPACE)
                     .run(connection, descriptor.migrations());
         } catch (SQLException e) {
@@ -104,14 +182,15 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         }
     }
 
-    private Map<String, Integer> readStoredVersions() {
+    /** Don't merge the two results: empty means the file can't be read, an empty map means it holds no versions. */
+    private Optional<Map<String, Integer>> readStoredVersions() {
         try {
-            return SqliteSchemaVersions.read(path);
+            return Optional.of(SqliteSchemaVersions.read(path));
         } catch (StorageException unreadable) {
-            // Don't treat an unreadable file as too new: the normal open decides what happens to it.
+            // Don't treat an unreadable file as too new or a failed copy: the normal open decides what happens to it.
             LOG.warn("storage.open.versionsUnreadable database={} (continuing with the normal open)",
                     descriptor.id(), unreadable);
-            return Map.of();
+            return Optional.empty();
         }
     }
 
@@ -124,7 +203,8 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
 
     /**
      * Runs a component's migrations on the serialized writer executor, so schema work cannot interleave with
-     * concurrent writes. Throws {@link DatabaseTooNewException} if the stored version is above every migration's.
+     * concurrent writes. Throws {@link DatabaseTooNewException} if the stored version is above every migration's, and
+     * {@link PreMigrationCopyException} if the copy due before them fails.
      */
     @Override
     public void migrate(String namespace, List<DatabaseMigration> migrations) {
@@ -142,7 +222,11 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         await(writerExecutor.submit(contextualCall(() -> {
             try (Connection connection = openConnection()) {
                 int highest = declared.stream().mapToInt(DatabaseMigration::version).max().orElse(0);
-                rejectIfTooNew(SqliteSchemaVersions.read(connection), Map.of(cleaned, highest));
+                Map<String, Integer> stored = SqliteSchemaVersions.read(connection);
+                rejectIfTooNew(stored, Map.of(cleaned, highest));
+                if (copyDue(stored, cleaned, highest)) {
+                    leaveCopy(connection);
+                }
                 new SqliteMigrationRunner(cleaned).run(connection, declared);
                 return null;
             } catch (SQLException e) {

@@ -345,6 +345,40 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 
 `SqliteSchemaVersions.read(path)` 和 `findTooNew(stored, declared)` 是公开的，应用要在开库之前做检查时直接用它们，不用自己再写一份。
 
+### 迁移前留副本
+
+迁移写错了的时候，要有一份迁移之前的库可以手动换回。descriptor 设了副本文件夹，库有待跑的迁移时就先留一份：
+
+```java
+DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
+        .owner(DatabaseOwner.application("myapp"))
+        .location(libraryDir)
+        .migration(createLibrary)
+        .preMigrationCopyDir(libraryDir.resolve("backups"))
+        .build();
+```
+
+副本在 `<副本文件夹>/<库文件名>`，文件名和库一样，所以副本文件夹不能是库自己所在的文件夹。文件夹必须是绝对路径，不设就不留副本。
+
+**什么时候留。** 库里的版本低于这条版本线 migration 的最高版本，就算有待跑。`initialize`（`main`）和 `migrate(namespace, ...)` 两条路都看。
+
+- 一次打开只留一份，留在第一次要迁移的时候。`main` 迁完之后组件再 `migrate`，不会用迁移了一半的库盖掉前一份。
+- 全新的库不留：`initialize` 时文件不在或长度为 0，这次打开之后的 `migrate` 也不留。
+- 没有待跑的迁移就什么都不写，副本文件夹也不建，所以放在只读文件夹或移动盘上的库照常能开。不带 migration 的 descriptor 没有待跑的 `main`。
+
+**只留最新一份。** 副本先写到 `<库文件名>.tmp`，写完用一次原子改名换掉上一份，写到一半失败不会把上一份弄坏。上次崩溃留下的临时文件，开始前先删掉。
+
+**留不下就不迁移。** 文件夹建不出来、磁盘满、改名失败，都抛 `PreMigrationCopyException`（`StorageException` 的子类），带库 id 和副本文件夹，临时文件已经删掉，这次的迁移一条都没跑。`initialize` 失败时没有留下句柄，问题解决后可以再 `open`；版本读得出来的库，这时主文件一个字节都没变。`migrate` 失败时句柄还能用，再调一次会重新留副本。在 `PathAccessPolicy.existingRoot(root)` 的作用域里，副本文件夹也要在 `root` 里面，不会重建已经不在的目录。
+
+**用 SQLite 备份，不拷文件。** 备份经过连接读库，`-wal` 里的内容也在副本里；拷主文件会把崩溃时还在 WAL 里的数据漏掉。副本是一份完整的库，文件头的日志模式和原库一样，打开 WAL 模式的副本时旁边同样会出现 `-shm` 和 `-wal`。备份目标写成 `file:` URI，因为驱动解析 `backup to` 时没有办法转义路径里的双引号，URI 还能让中文、空格、`#`、`%` 都不出错。
+
+**用哪条连接。** `initialize` 在普通连接之前用只读连接留副本，这样留不下时主文件没有被动过。版本读不出来的文件，这一步什么都不做，也不报错：
+
+- 带着只读连接恢复不了的热日志的库，普通打开能恢复。这时在普通连接上比完版本、跑迁移之前留副本，和 `migrate` 走同一条路。文件已经被普通打开过，所以留不下时不保证字节不变，只保证迁移不跑。
+- 普通打开也开不了的文件，和没设副本文件夹时一样，不算副本失败，也不建副本文件夹。
+
+**还原是手动的。** 框架不会自己换回副本。要还原时先关掉用这个库的程序，把副本拷回原处；旁边如果有原库的 `-wal`、`-shm`，要一起删掉，否则 SQLite 会把旧日志用到副本上。
+
 ## Entity 注解和基础 DAO
 
 第一版支持 Java record entity。

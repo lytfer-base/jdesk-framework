@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -30,6 +31,7 @@ public final class DatabaseDescriptor {
     private final List<Class<?>> entities;
     private final Path location;
     private final Map<String, Integer> declaredVersions;
+    private final Path preMigrationCopyDir;
 
     private DatabaseDescriptor(Builder builder) {
         this.id = validateId(builder.id);
@@ -43,6 +45,7 @@ public final class DatabaseDescriptor {
         versions.put(MAIN_NAMESPACE, migrations.stream().mapToInt(DatabaseMigration::version).max().orElse(0));
         versions.putAll(builder.knownNamespaces);
         this.declaredVersions = Collections.unmodifiableMap(versions);
+        this.preMigrationCopyDir = validateCopyDir(builder.preMigrationCopyDir);
     }
 
     /**
@@ -118,6 +121,13 @@ public final class DatabaseDescriptor {
         return declaredVersions;
     }
 
+    /**
+     * Returns the folder that receives a copy of the file before its first pending migration, if one is set.
+     */
+    public Optional<Path> preMigrationCopyDir() {
+        return Optional.ofNullable(preMigrationCopyDir);
+    }
+
     private static String validateId(String value) {
         String cleaned = Objects.requireNonNull(value, "id").trim();
         if (!DATABASE_ID.matcher(cleaned).matches()) {
@@ -141,6 +151,13 @@ public final class DatabaseDescriptor {
         return location;
     }
 
+    private static Path validateCopyDir(Path directory) {
+        if (directory != null && !directory.isAbsolute()) {
+            throw new StorageException("Pre-migration copy folder must be an absolute path: " + directory);
+        }
+        return directory;
+    }
+
     public static final class Builder {
         private final String id;
         private DatabaseOwner owner;
@@ -150,6 +167,7 @@ public final class DatabaseDescriptor {
         private final List<Class<?>> entities = new ArrayList<>();
         private Path location;
         private final Map<String, Integer> knownNamespaces = new LinkedHashMap<>();
+        private Path preMigrationCopyDir;
 
         private Builder(String id) {
             this.id = id;
@@ -220,6 +238,15 @@ public final class DatabaseDescriptor {
                 throw new StorageException("Invalid highest version " + highestVersion + " for namespace " + cleaned);
             }
             this.knownNamespaces.put(cleaned, highestVersion);
+            return this;
+        }
+
+        /**
+         * Leaves a copy of the file in this absolute folder before the first pending migration of each open, replacing
+         * the previous copy; {@code null} leaves none. Must not be the database's own folder: the names are the same.
+         */
+        public Builder preMigrationCopyDir(Path directory) {
+            this.preMigrationCopyDir = directory;
             return this;
         }
 
