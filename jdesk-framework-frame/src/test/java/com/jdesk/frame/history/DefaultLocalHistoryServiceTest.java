@@ -1,5 +1,6 @@
 package com.jdesk.frame.history;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -20,6 +21,7 @@ import com.jdesk.frame.history.HistoryTestSupport.MutableClock;
 import com.jdesk.frame.storage.DatabaseDescriptor;
 import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseService;
+import com.jdesk.frame.storage.DatabaseTooNewException;
 import com.jdesk.frame.storage.StorageException;
 import com.jdesk.frame.storage.sqlite.SqliteDatabaseService;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +33,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -74,6 +77,38 @@ class DefaultLocalHistoryServiceTest {
 
     private static CaptureRequest request(String text) {
         return CaptureRequest.of(KEY, "a.md", ContentSource.bytes(text.getBytes(StandardCharsets.UTF_8)), HistorySource.APP);
+    }
+
+    @Test
+    void tooNewHistoryIsRefusedNotQuarantined() throws Exception {
+        Path historyDir = dir.resolve("history");
+        Files.createDirectories(historyDir);
+        Path database = historyDir.resolve("history.sqlite");
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+             Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA journal_mode=delete");
+            statement.execute("create table jdesk_schema_version (namespace text primary key, version integer not null,"
+                    + " updated_at integer not null)");
+            statement.executeUpdate("insert into jdesk_schema_version values ('main', 9, 0)");
+        }
+        byte[] before = Files.readAllBytes(database);
+
+        DatabaseTooNewException failure = assertThrows(DatabaseTooNewException.class,
+                () -> service.openStore("scope.new", historyDir, HistoryPolicy.defaults()));
+
+        assertEquals(9, failure.databaseVersion());
+        assertArrayEquals(before, Files.readAllBytes(database));
+        try (Stream<Path> files = Files.list(historyDir)) {
+            assertEquals(List.of("history.sqlite"), files.map(file -> file.getFileName().toString())
+                    .filter(name -> name.startsWith("history.sqlite")).toList(), "nothing is set aside");
+        }
+        assertTrue(service.findOpenStore("scope.new").isEmpty());
+    }
+
+    @Test
+    void supportedVersionsNameHighestMigration() {
+        int history = HistorySchema.migrations().stream().mapToInt(m -> m.version()).max().orElseThrow();
+        assertEquals(Map.of("main", history), DefaultLocalHistoryService.supportedVersions());
     }
 
     @Test

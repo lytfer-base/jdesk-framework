@@ -22,8 +22,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -42,6 +44,12 @@ class DefaultManagedVfsServiceTest {
     void clearState() {
         Disposer.clearAll();
         PathManager.resetForTests();
+    }
+
+    @Test
+    void supportedVersionsNameHighestMigration() {
+        int highest = VfsCatalogSchema.migrations().stream().mapToInt(m -> m.version()).max().orElseThrow();
+        assertEquals(Map.of("jdesk.vfs", highest), DatabaseVfsCatalogBackend.supportedVersions());
     }
 
     @Test

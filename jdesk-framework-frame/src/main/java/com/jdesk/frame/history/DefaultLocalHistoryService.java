@@ -14,6 +14,7 @@ import com.jdesk.frame.storage.DatabaseHandle;
 import com.jdesk.frame.storage.DatabaseMigration;
 import com.jdesk.frame.storage.DatabaseOwner;
 import com.jdesk.frame.storage.DatabaseService;
+import com.jdesk.frame.storage.DatabaseTooNewException;
 import com.jdesk.frame.storage.StorageException;
 import javax.swing.SwingUtilities;
 import java.io.IOException;
@@ -128,6 +129,11 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         return opened.store();
     }
 
+    /** Returns the highest schema version of the history database, keyed by its namespace. */
+    public static Map<String, Integer> supportedVersions() {
+        return Map.of("main", HistorySchema.migrations().stream().mapToInt(DatabaseMigration::version).max().orElseThrow());
+    }
+
     private Open open(String scopeId, Path dir, HistoryPolicy policy, PathAccessPolicy access) {
         if (access.requiresExistingRoot()) {
             requireExistingHistory(dir, access);
@@ -143,6 +149,8 @@ public final class DefaultLocalHistoryService implements LocalHistoryService, Di
         DatabaseHandle database;
         try {
             database = openDatabase(scopeId, dir);
+        } catch (DatabaseTooNewException tooNew) {
+            throw tooNew;
         } catch (StorageException first) {
             if (access.requiresExistingRoot()) throw first;
             if (!looksCorrupt(first)) {
