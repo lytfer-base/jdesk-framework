@@ -12,6 +12,8 @@ public interface DatabaseService {
      * Opens the database, or returns the handle already open for its id. There is one handle per id per process and
      * no reference counting, so only the owner that manages the database's lifecycle may close it.
      * Callers that only use the database must call {@link #borrow(DatabaseDescriptor)} instead.
+     *
+     * @throws DatabaseTooNewException if a declared namespace is newer in the database; no migration runs
      */
     DatabaseHandle open(DatabaseDescriptor descriptor);
 

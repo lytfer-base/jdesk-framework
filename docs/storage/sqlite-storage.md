@@ -337,7 +337,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 - 组件往往在库打开很久之后才调 `migrate`，那时普通连接已经动过文件。想在动库之前就挡住组件的命名空间，要把它写进 descriptor。
 - 没声明的命名空间开库时不比。新版程序加一组独立的表、用新的命名空间时，旧程序照常能开。旧程序碰了这组表会出问题的话，就要同时升 `main` 或已声明命名空间的版本。
 - `migrate(namespace, migrations)` 跑之前也比一次，库里这条命名空间的版本比 `migrations` 的最高版本高，抛同样的异常。这时文件已经被普通连接打开过，只是迁移没有跑。
-- 版本 0 表示没有声明，不参与比较：不带 migration 的 descriptor 能开任何版本的库，`migrate` 传空列表也不会被拒绝。这类 descriptor 不做版本管理，也就说不上比库旧。`knownNamespace` 的版本必须为正。
+- 版本 0 表示没有声明，不参与比较：不带 migration 的 descriptor 不比 `main`，库里的 `main` 是多少都能开，用 `knownNamespace` 声明过的命名空间照常比。`migrate` 传空列表也不会被拒绝。这类 descriptor 不管 `main` 的版本，也就说不上比库旧。`knownNamespace` 的版本必须为正。
 
 **版本读不出来不算太新。** 文件不是 SQLite、损坏、被占着，或者带着只读连接恢复不了的热日志时，记一条 WARN，继续走普通打开。普通打开成功的话，跑迁移之前再比一次版本，库太新同样抛 `DatabaseTooNewException`。这时文件已经被普通打开过，不保证字节不变，只保证迁移不跑。普通打开也开不了的文件，和没有这项检查时一样。文件不在、没有 `jdesk_schema_version` 表，都算没有版本。
 

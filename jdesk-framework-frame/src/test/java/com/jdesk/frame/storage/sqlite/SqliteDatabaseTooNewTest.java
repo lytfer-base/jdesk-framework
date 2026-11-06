@@ -59,6 +59,21 @@ class SqliteDatabaseTooNewTest {
     }
 
     @Test
+    void openRejectsDatabaseWrittenByNewerDescriptor() throws Exception {
+        service.open(descriptor().migration(noOp(2)).build()).close();
+        byte[] before = Files.readAllBytes(database());
+
+        DatabaseTooNewException failure = assertThrows(DatabaseTooNewException.class,
+                () -> service.open(descriptor().build()));
+
+        assertEquals(ID, failure.databaseId());
+        assertEquals("main", failure.namespace());
+        assertEquals(2, failure.databaseVersion());
+        assertEquals(1, failure.supportedVersion());
+        assertArrayEquals(before, Files.readAllBytes(database()));
+    }
+
+    @Test
     void openRejectsNewerDeclaredNamespaceBeforeTouchingDatabase() throws Exception {
         seed(Map.of("main", 1, "ns", 2));
         byte[] before = Files.readAllBytes(database());
@@ -98,12 +113,16 @@ class SqliteDatabaseTooNewTest {
     }
 
     @Test
-    void withoutMigrationsNothingCountsAsTooNew() throws Exception {
+    void withoutMigrationsMainIsNotCompared() throws Exception {
         seed(Map.of("main", 9, "ns", 5));
 
         DatabaseHandle database = service.open(bareDescriptor().build());
 
         assertDoesNotThrow(() -> database.migrate("ns", List.of()));
+        database.close();
+        DatabaseTooNewException failure = assertThrows(DatabaseTooNewException.class,
+                () -> service.open(bareDescriptor().knownNamespace("ns", 1).build()));
+        assertEquals("ns", failure.namespace());
     }
 
     @Test

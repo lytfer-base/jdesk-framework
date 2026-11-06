@@ -68,7 +68,9 @@ public final class SqliteSchemaVersions {
                     return Map.of();
                 }
             }
-            try (ResultSet rows = statement.executeQuery("select namespace, version from jdesk_schema_version")) {
+            // Must skip NULL: SQLite allows it in a text primary key, and Map.copyOf throws on a null key.
+            try (ResultSet rows = statement.executeQuery(
+                    "select namespace, version from jdesk_schema_version where namespace is not null")) {
                 while (rows.next()) {
                     versions.put(rows.getString("namespace"), rows.getInt("version"));
                 }

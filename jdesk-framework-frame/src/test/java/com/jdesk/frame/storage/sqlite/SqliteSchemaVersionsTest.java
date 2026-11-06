@@ -54,12 +54,28 @@ class SqliteSchemaVersionsTest {
         assertEquals(Map.of(), SqliteSchemaVersions.read(missing));
         assertFalse(Files.exists(home.resolve("absent")));
 
+        Path missingInExistingDirectory = home.resolve("missing.sqlite");
+        assertEquals(Map.of(), SqliteSchemaVersions.read(missingInExistingDirectory));
+        assertFalse(Files.exists(missingInExistingDirectory));
+
         Path noTable = home.resolve("plain.sqlite");
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + noTable);
              Statement statement = connection.createStatement()) {
             statement.execute("create table notes(id integer primary key)");
         }
         assertEquals(Map.of(), SqliteSchemaVersions.read(noTable));
+    }
+
+    @Test
+    void readSkipsRowWithoutNamespace() throws Exception {
+        Path database = home.resolve("db.sqlite");
+        seed(database, Map.of("main", 3));
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("insert into jdesk_schema_version values (null, 9, 0)");
+        }
+
+        assertEquals(Map.of("main", 3), SqliteSchemaVersions.read(database));
     }
 
     @Test
@@ -81,8 +97,8 @@ class SqliteSchemaVersionsTest {
 
     @Test
     void readWorksInChinesePathWithSpaces() throws Exception {
-        Path directory = Files.createDirectories(home.resolve("数据 目录 #1 100%"));
-        Path database = directory.resolve("项目 库.sqlite");
+        Path directory = Files.createDirectories(home.resolve("\u6570\u636e \u76ee\u5f55 #1 100%"));
+        Path database = directory.resolve("\u9879\u76ee \u5e93.sqlite");
         seed(database, Map.of("main", 4));
 
         assertEquals(Map.of("main", 4), SqliteSchemaVersions.read(database));
