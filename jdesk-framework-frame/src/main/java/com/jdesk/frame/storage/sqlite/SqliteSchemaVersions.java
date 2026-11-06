@@ -3,6 +3,7 @@ package com.jdesk.frame.storage.sqlite;
 import com.jdesk.frame.storage.StorageException;
 import org.sqlite.SQLiteConfig;
 
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -41,12 +42,18 @@ public final class SqliteSchemaVersions {
         config.setReadOnly(true);
         config.setBusyTimeout(READ_BUSY_TIMEOUT_MILLIS);
         // Don't add immutable=1: SQLite would ignore the -wal file and report a crashed database as older than it is.
-        String url = "jdbc:sqlite:" + database.toUri().toASCIIString();
+        String url = "jdbc:sqlite:" + sqliteAddress(database.toUri());
         try (Connection connection = DriverManager.getConnection(url, config.toProperties())) {
             return read(connection);
         } catch (SQLException e) {
             throw new StorageException("Failed to read schema versions: " + database, e);
         }
+    }
+
+    /** Returns the SQLite address of a file URI, moving a UNC host into the path: SQLite rejects a URI authority. */
+    static String sqliteAddress(URI uri) {
+        String authority = uri.getRawAuthority();
+        return authority == null ? uri.toASCIIString() : "file:////" + authority + uri.getRawPath();
     }
 
     /**

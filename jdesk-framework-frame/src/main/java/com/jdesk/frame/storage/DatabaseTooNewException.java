@@ -2,7 +2,7 @@ package com.jdesk.frame.storage;
 
 /**
  * Thrown when a database holds a schema version higher than the program supports for one namespace.
- * The database has not been changed when this is thrown.
+ * No migration has run for the refused open or migrate call.
  */
 public final class DatabaseTooNewException extends StorageException {
 

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,12 +21,14 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Verifies that a database newer than the program is refused before any writable connection touches it.
- * Must seed with a rollback journal: in a WAL file the open's pragmas change no bytes, so the byte checks prove nothing.
+ * Verifies that a database newer than the program is refused: untouched when its versions can be read, and in any
+ * case before a migration runs.
+ * Must seed with a rollback journal: in a WAL file the open's pragmas change no bytes, so byte checks prove nothing.
  */
 class SqliteDatabaseTooNewTest {
 
@@ -126,6 +129,27 @@ class SqliteDatabaseTooNewTest {
     }
 
     @Test
+    void tooNewFoundAfterOpenStopsMigrations() throws Exception {
+        seedWithHotJournal(Map.of("main", 1, "ns", 2));
+        assertThrows(StorageException.class, () -> SqliteSchemaVersions.read(database()),
+                "the read-only check must not get to see the versions");
+        AtomicBoolean migrated = new AtomicBoolean();
+
+        DatabaseTooNewException failure = assertThrows(DatabaseTooNewException.class, () -> service.open(descriptor()
+                .migration(DatabaseMigration.of(2, "pending", session -> migrated.set(true)))
+                .knownNamespace("ns", 1)
+                .build()));
+
+        assertEquals(ID, failure.databaseId());
+        assertEquals("ns", failure.namespace());
+        assertEquals(2, failure.databaseVersion());
+        assertEquals(1, failure.supportedVersion());
+        assertFalse(migrated.get());
+        assertEquals(Map.of("main", 1, "ns", 2), SqliteSchemaVersions.read(database()));
+        assertTrue(service.findOpen(ID).isEmpty());
+    }
+
+    @Test
     void declaredVersionsHoldMainAndKnownNamespaces() {
         assertEquals(Map.of("main", 0), bareDescriptor().build().declaredVersions());
         assertEquals(Map.of("main", 4, "ns", 2),
@@ -160,7 +184,37 @@ class SqliteDatabaseTooNewTest {
     }
 
     private void seed(Map<String, Integer> versions) throws SQLException {
-        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database());
+        seed(database(), versions);
+    }
+
+    /** Leaves {@link #database()} with a hot journal: a read-only connection can't read it, a normal open recovers. */
+    private void seedWithHotJournal(Map<String, Integer> versions) throws Exception {
+        Path source = home.resolve("source.sqlite");
+        seed(source, versions);
+        try (Connection writer = DriverManager.getConnection("jdbc:sqlite:" + source);
+             Statement statement = writer.createStatement()) {
+            // Must stay OFF: otherwise the journal header stays zeroed until its first sync, and it isn't hot yet.
+            statement.execute("PRAGMA synchronous=OFF");
+            writer.setAutoCommit(false);
+            statement.executeUpdate("update jdesk_schema_version set updated_at = 1");
+            copy(source, database());
+            copy(journal(source), journal(database()));
+            writer.rollback();
+        }
+    }
+
+    private static Path journal(Path database) {
+        return database.resolveSibling(database.getFileName() + "-journal");
+    }
+
+    private static void copy(Path source, Path target) throws Exception {
+        try (InputStream in = Files.newInputStream(source)) {
+            Files.copy(in, target);
+        }
+    }
+
+    private static void seed(Path database, Map<String, Integer> versions) throws SQLException {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
              Statement statement = connection.createStatement()) {
             statement.execute("PRAGMA journal_mode=delete");
             statement.execute("""

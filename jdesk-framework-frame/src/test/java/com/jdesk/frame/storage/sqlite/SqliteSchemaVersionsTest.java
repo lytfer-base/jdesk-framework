@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -85,6 +86,14 @@ class SqliteSchemaVersionsTest {
         seed(database, Map.of("main", 4));
 
         assertEquals(Map.of("main", 4), SqliteSchemaVersions.read(database));
+    }
+
+    @Test
+    void sqliteAddressMovesOnlyAUncHostIntoThePath() {
+        assertEquals("file:////host/share/a%20b.sqlite",
+                SqliteSchemaVersions.sqliteAddress(URI.create("file://host/share/a%20b.sqlite")));
+        assertEquals("file:///D:/a%20b/c.sqlite",
+                SqliteSchemaVersions.sqliteAddress(URI.create("file:///D:/a%20b/c.sqlite")));
     }
 
     @Test

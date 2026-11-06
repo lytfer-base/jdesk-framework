@@ -82,12 +82,18 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
     /**
      * Applies the descriptor's migrations and prepares its entity tables and indexes; call it once before use.
      *
-     * @throws DatabaseTooNewException if a declared namespace is newer than the descriptor; the file stays unchanged
+     * @throws DatabaseTooNewException if a declared namespace is newer than the descriptor; no migration runs
      */
     void initialize() {
         // Must stay before openConnection(): its pragmas and the migration runner both write to the file.
         rejectIfTooNew(readStoredVersions(), descriptor.declaredVersions());
+        openAndMigrate();
+    }
+
+    private void openAndMigrate() {
         try (Connection connection = openConnection()) {
+            // Must stay before the runner: the check in initialize() continues when it can't read the file.
+            rejectIfTooNew(SqliteSchemaVersions.read(connection), descriptor.declaredVersions());
             new SqliteMigrationRunner(SqliteMigrationRunner.MAIN_NAMESPACE)
                     .run(connection, descriptor.migrations());
         } catch (SQLException e) {

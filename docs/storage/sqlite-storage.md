@@ -339,9 +339,9 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 - `migrate(namespace, migrations)` 跑之前也比一次，库里这条命名空间的版本比 `migrations` 的最高版本高，抛同样的异常。这时文件已经被普通连接打开过，只是迁移没有跑。
 - 版本 0 表示没有声明，不参与比较：不带 migration 的 descriptor 能开任何版本的库，`migrate` 传空列表也不会被拒绝。这类 descriptor 不做版本管理，也就说不上比库旧。`knownNamespace` 的版本必须为正。
 
-**版本读不出来不算太新。** 文件不是 SQLite、损坏或者被占着时，记一条 WARN，按没有版本往下走，这个库怎么处理由普通打开决定。文件不在、没有 `jdesk_schema_version` 表，都算没有版本。网络共享的 UNC 路径目前也走这条路：`toUri()` 写出的地址 SQLite 不接受，这种路径上版本检查不起作用。
+**版本读不出来不算太新。** 文件不是 SQLite、损坏、被占着，或者带着只读连接恢复不了的热日志时，记一条 WARN，继续走普通打开。普通打开成功的话，跑迁移之前再比一次版本，库太新同样抛 `DatabaseTooNewException`。这时文件已经被普通打开过，不保证字节不变，只保证迁移不跑。普通打开也开不了的文件，和没有这项检查时一样。文件不在、没有 `jdesk_schema_version` 表，都算没有版本。
 
-**读版本要算上 `-wal`。** 崩溃留下 `-wal` 的库，新版本可能只在 WAL 里，只看主文件会把它当成旧库。所以连接不能带 `immutable=1`。只读连接不会做 checkpoint，`-wal` 的内容不会丢；WAL 模式的库读完后旁边可能多出 `-shm` 和空的 `-wal`，下一次普通打开关闭时会清掉。JDBC 地址用 `path.toUri().toASCIIString()`，路径里的中文、空格、`#`、`%` 才不会出错。
+**读版本要算上 `-wal`。** 崩溃留下 `-wal` 的库，新版本可能只在 WAL 里，只看主文件会把它当成旧库。所以连接不能带 `immutable=1`。只读连接不会做 checkpoint，`-wal` 的内容不会丢；WAL 模式的库读完后旁边可能多出 `-shm` 和空的 `-wal`，下一次普通打开关闭时会清掉。JDBC 地址由 `path.toUri()` 转成，路径里的中文、空格、`#`、`%` 才不会出错；UNC 路径的主机名要挪进路径（`file:////host/share/...`），SQLite 不接受 URI 里带主机名。
 
 `SqliteSchemaVersions.read(path)` 和 `findTooNew(stored, declared)` 是公开的，应用要在开库之前做检查时直接用它们，不用自己再写一份。
 
@@ -524,7 +524,7 @@ public record NoteTagEntity(
 - WAL、busy timeout、默认关闭 foreign key。
 - migration version 和 migration log。
 - migration 失败 rollback 和错误记录。
-- 比程序新的库在动文件之前拒绝。
+- 比程序新的库在迁移之前拒绝，读得到版本时连文件都不动。
 - Java record entity 注解。
 - 基础 CRUD DAO。
 - `RowMapper` 和受控 `DatabaseRow`。
