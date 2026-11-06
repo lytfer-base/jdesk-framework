@@ -45,7 +45,7 @@ public final class DatabaseDescriptor {
         versions.put(MAIN_NAMESPACE, migrations.stream().mapToInt(DatabaseMigration::version).max().orElse(0));
         versions.putAll(builder.knownNamespaces);
         this.declaredVersions = Collections.unmodifiableMap(versions);
-        this.preMigrationCopyDir = validateCopyDir(builder.preMigrationCopyDir);
+        this.preMigrationCopyDir = validateCopyDir(builder.preMigrationCopyDir, location);
     }
 
     /**
@@ -151,9 +151,12 @@ public final class DatabaseDescriptor {
         return location;
     }
 
-    private static Path validateCopyDir(Path directory) {
+    private static Path validateCopyDir(Path directory, Path location) {
         if (directory != null && !directory.isAbsolute()) {
             throw new StorageException("Pre-migration copy folder must be an absolute path: " + directory);
+        }
+        if (directory != null && location != null && directory.normalize().equals(location.normalize())) {
+            throw new StorageException("Pre-migration copy folder must not be the database's folder: " + directory);
         }
         return directory;
     }
@@ -243,7 +246,8 @@ public final class DatabaseDescriptor {
 
         /**
          * Leaves a copy of the file in this absolute folder before the first pending migration of each open, replacing
-         * the previous copy; {@code null} leaves none. Must not be the database's own folder: the names are the same.
+         * the previous copy; {@code null} leaves none. Must not be the database's own folder, the names are the same:
+         * {@link #build()} throws if it equals {@link #location(Path)}.
          */
         public Builder preMigrationCopyDir(Path directory) {
             this.preMigrationCopyDir = directory;

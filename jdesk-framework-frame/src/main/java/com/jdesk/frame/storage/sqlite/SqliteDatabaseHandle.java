@@ -113,7 +113,10 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         }
     }
 
-    /** Must answer false when the size can't be read: treating such a file as new would skip its copy. */
+    /**
+     * Must stay true for a file that can't be seen: a removed drive has to fail in the normal open, not as a failed
+     * copy. A failed size read on a file that is seen answers false, so its copy isn't skipped.
+     */
     private boolean isFresh() {
         try {
             return !Files.isRegularFile(path) || Files.size(path) == 0;

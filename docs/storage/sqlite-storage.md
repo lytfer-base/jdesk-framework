@@ -341,7 +341,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 
 **版本读不出来不算太新。** 文件不是 SQLite、损坏、被占着，或者带着只读连接恢复不了的热日志时，记一条 WARN，继续走普通打开。普通打开成功的话，跑迁移之前再比一次版本，库太新同样抛 `DatabaseTooNewException`。这时文件已经被普通打开过，不保证字节不变，只保证迁移不跑。普通打开也开不了的文件，和没有这项检查时一样。文件不在、没有 `jdesk_schema_version` 表，都算没有版本。
 
-**读版本要算上 `-wal`。** 崩溃留下 `-wal` 的库，新版本可能只在 WAL 里，只看主文件会把它当成旧库。所以连接不能带 `immutable=1`。只读连接不会做 checkpoint，`-wal` 的内容不会丢；WAL 模式的库读完后旁边可能多出 `-shm` 和空的 `-wal`，下一次普通打开关闭时会清掉。JDBC 地址由 `path.toUri()` 转成，路径里的中文、空格、`#`、`%` 才不会出错；UNC 路径的主机名要挪进路径（`file:////host/share/...`），SQLite 不接受 URI 里带主机名。
+**读版本要算上 `-wal`。** 崩溃留下 `-wal` 的库，新版本可能只在 WAL 里，只看主文件会把它当成旧库。所以连接不能带 `immutable=1`。只读连接不会做 checkpoint，`-wal` 的内容不会丢；WAL 模式的库读完后旁边可能多出 `-shm` 和空的 `-wal`，下一次普通打开关闭时会清掉。JDBC 地址由 `path.toUri()` 转成，路径里的中文、空格、`#`、`%` 才不会出错；UNC 路径的主机名要挪进路径（`file:////host/share/...`），SQLite 不接受 URI 里带主机名。非 ASCII 字符按 UTF-8 字节做百分号编码，不能用 `URI.toASCIIString()`：它会先做 NFC 规范化，Mac 上带来的分解形式的文件名（日文浊音、带重音的字母、韩文）就成了另一个路径，读版本和留副本都会失败。
 
 `SqliteSchemaVersions.read(path)` 和 `findTooNew(stored, declared)` 是公开的，应用要在开库之前做检查时直接用它们，不用自己再写一份。
 
@@ -358,7 +358,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
         .build();
 ```
 
-副本在 `<副本文件夹>/<库文件名>`，文件名和库一样，所以副本文件夹不能是库自己所在的文件夹。文件夹必须是绝对路径，不设就不留副本。
+副本在 `<副本文件夹>/<库文件名>`，文件名和库一样，所以副本文件夹不能是库自己所在的文件夹，和 `location` 相同时 `build()` 抛 `StorageException`；没设 `location` 的库比不了，要自己保证。文件夹必须是绝对路径，不设就不留副本。
 
 **什么时候留。** 库里的版本低于这条版本线 migration 的最高版本，就算有待跑。`initialize`（`main`）和 `migrate(namespace, ...)` 两条路都看。
 
@@ -370,7 +370,7 @@ DatabaseDescriptor descriptor = DatabaseDescriptor.builder("myapp.library")
 
 **留不下就不迁移。** 文件夹建不出来、磁盘满、改名失败，都抛 `PreMigrationCopyException`（`StorageException` 的子类），带库 id 和副本文件夹，临时文件已经删掉，这次的迁移一条都没跑。`initialize` 失败时没有留下句柄，问题解决后可以再 `open`；版本读得出来的库，这时主文件一个字节都没变。`migrate` 失败时句柄还能用，再调一次会重新留副本。在 `PathAccessPolicy.existingRoot(root)` 的作用域里，副本文件夹也要在 `root` 里面，不会重建已经不在的目录。
 
-**用 SQLite 备份，不拷文件。** 备份经过连接读库，`-wal` 里的内容也在副本里；拷主文件会把崩溃时还在 WAL 里的数据漏掉。副本是一份完整的库，文件头的日志模式和原库一样，打开 WAL 模式的副本时旁边同样会出现 `-shm` 和 `-wal`。备份目标写成 `file:` URI，因为驱动解析 `backup to` 时没有办法转义路径里的双引号，URI 还能让中文、空格、`#`、`%` 都不出错。
+**用 SQLite 备份，不拷文件。** 备份经过连接读库，`-wal` 里的内容也在副本里；拷主文件会把崩溃时还在 WAL 里的数据漏掉。副本是一份完整的库，文件头的日志模式和原库一样，打开 WAL 模式的副本时旁边同样会出现 `-shm` 和 `-wal`。备份目标写成 `file:` URI，因为驱动解析 `backup to` 时没有办法转义路径里的双引号。地址的写法和读版本时一样，中文、空格、`#`、`%`、分解形式的文件名都不出错。
 
 **用哪条连接。** `initialize` 在普通连接之前用只读连接留副本，这样留不下时主文件没有被动过。版本读不出来的文件，这一步什么都不做，也不报错：
 

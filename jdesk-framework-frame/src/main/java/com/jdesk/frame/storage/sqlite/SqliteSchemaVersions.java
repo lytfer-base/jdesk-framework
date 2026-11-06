@@ -4,6 +4,7 @@ import com.jdesk.frame.storage.StorageException;
 import org.sqlite.SQLiteConfig;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -12,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 
@@ -22,6 +24,7 @@ import java.util.Optional;
 public final class SqliteSchemaVersions {
 
     private static final int READ_BUSY_TIMEOUT_MILLIS = 2000;
+    private static final HexFormat UPPERCASE_HEX = HexFormat.of().withUpperCase();
 
     private SqliteSchemaVersions() {
     }
@@ -54,10 +57,27 @@ public final class SqliteSchemaVersions {
         return DriverManager.getConnection("jdbc:sqlite:" + sqliteAddress(database.toUri()), config.toProperties());
     }
 
-    /** Returns the SQLite address of a file URI, moving a UNC host into the path: SQLite rejects a URI authority. */
+    /**
+     * Returns the SQLite address of a file URI, moving a UNC host into the path: SQLite rejects a URI authority.
+     * Don't use {@link URI#toASCIIString()}: its NFC normalization turns a decomposed name into a different path.
+     */
     static String sqliteAddress(URI uri) {
         String authority = uri.getRawAuthority();
-        return authority == null ? uri.toASCIIString() : "file:////" + authority + uri.getRawPath();
+        return percentEncodeNonAscii(authority == null ? uri.toString() : "file:////" + authority + uri.getRawPath());
+    }
+
+    private static String percentEncodeNonAscii(String address) {
+        StringBuilder encoded = new StringBuilder(address.length());
+        address.codePoints().forEach(codePoint -> {
+            if (codePoint < 0x80) {
+                encoded.appendCodePoint(codePoint);
+            } else {
+                for (byte unit : Character.toString(codePoint).getBytes(StandardCharsets.UTF_8)) {
+                    encoded.append('%').append(UPPERCASE_HEX.toHexDigits(unit));
+                }
+            }
+        });
+        return encoded.toString();
     }
 
     /**

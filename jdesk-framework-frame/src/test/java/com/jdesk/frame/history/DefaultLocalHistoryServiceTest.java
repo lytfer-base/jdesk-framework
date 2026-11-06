@@ -3,6 +3,7 @@ package com.jdesk.frame.history;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -118,7 +119,8 @@ class DefaultLocalHistoryServiceTest {
         Path copy = copies.resolve("history.sqlite");
         assertTrue(Files.isRegularFile(copy));
         assertEquals(Map.of(), SqliteSchemaVersions.read(copy), "the copy is from before the first migration");
-        assertEquals(Map.of("main", 1), SqliteSchemaVersions.read(historyDir.resolve("history.sqlite")));
+        assertEquals(DefaultLocalHistoryService.supportedVersions(),
+                SqliteSchemaVersions.read(historyDir.resolve("history.sqlite")));
     }
 
     @Test
@@ -147,8 +149,8 @@ class DefaultLocalHistoryServiceTest {
         LocalHistoryStore store = service.openStore("scope.a", historyDir, HistoryPolicy.defaults(),
                 dir.resolve("one"));
 
-        assertTrue(service.openStore("scope.a", historyDir, HistoryPolicy.defaults(), dir.resolve("two")) == store);
-        assertTrue(service.openStore("scope.a", historyDir, HistoryPolicy.defaults()) == store);
+        assertSame(store, service.openStore("scope.a", historyDir, HistoryPolicy.defaults(), dir.resolve("two")));
+        assertSame(store, service.openStore("scope.a", historyDir, HistoryPolicy.defaults()));
     }
 
     /** Creates a history folder whose database predates {@code jdesk_schema_version}, on a rollback journal. */

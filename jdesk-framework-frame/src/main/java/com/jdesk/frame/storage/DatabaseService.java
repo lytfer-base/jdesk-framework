@@ -14,6 +14,7 @@ public interface DatabaseService {
      * Callers that only use the database must call {@link #borrow(DatabaseDescriptor)} instead.
      *
      * @throws DatabaseTooNewException if a declared namespace is newer in the database; no migration runs
+     * @throws PreMigrationCopyException if the copy due before the migrations fails; no migration runs
      */
     DatabaseHandle open(DatabaseDescriptor descriptor);
 

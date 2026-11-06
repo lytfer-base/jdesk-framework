@@ -243,6 +243,11 @@ class SqlitePreMigrationCopyTest {
     }
 
     @Test
+    void copyWorksInPathWithDecomposedName() throws Exception {
+        assertCopyWorksIn(home.resolve("\u30ab\u3099\u30fc\u30c6\u3099\u30f3"), "\u30c6\u3099\u30fc\u30bf");
+    }
+
+    @Test
     void copyWorksInPathWithUriCharacters() throws Exception {
         assertCopyWorksIn(home.resolve("a#b %41 'c'"), "d#e %42 'f'");
     }
@@ -301,6 +306,15 @@ class SqlitePreMigrationCopyTest {
         assertEquals(copies(), descriptor(1).build().preMigrationCopyDir().orElseThrow());
         assertThrows(StorageException.class,
                 () -> bareDescriptor(home).preMigrationCopyDir(Path.of("relative")).build());
+    }
+
+    @Test
+    void descriptorRejectsTheDatabaseFolderAsCopyFolder() {
+        assertThrows(StorageException.class, () -> bareDescriptor(home).preMigrationCopyDir(home).build());
+        assertThrows(StorageException.class,
+                () -> bareDescriptor(home).preMigrationCopyDir(home.resolve("sub").resolve("..")).build());
+        assertEquals(home, DatabaseDescriptor.builder(ID).owner(DatabaseOwner.application("tests"))
+                .preMigrationCopyDir(home).build().preMigrationCopyDir().orElseThrow(), "no location to compare with");
     }
 
     private void assertCopyWorksIn(Path folder, String copyFolder) throws Exception {

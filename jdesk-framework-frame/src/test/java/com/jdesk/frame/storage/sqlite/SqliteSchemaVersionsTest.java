@@ -105,6 +105,29 @@ class SqliteSchemaVersionsTest {
     }
 
     @Test
+    void readWorksInPathWithDecomposedName() throws Exception {
+        Path directory = Files.createDirectories(home.resolve("\u30ab\u3099\u30fc\u30c6\u3099\u30f3"));
+        Path database = directory.resolve("\u30c6\u3099\u30fc\u30bf.sqlite");
+        seed(database, Map.of("main", 4));
+
+        assertEquals(Map.of("main", 4), SqliteSchemaVersions.read(database));
+    }
+
+    @Test
+    void sqliteAddressKeepsADecomposedNameDecomposed() {
+        assertEquals("file:///D:/%E3%82%AB%E3%82%99.sqlite",
+                SqliteSchemaVersions.sqliteAddress(URI.create("file:///D:/\u30ab\u3099.sqlite")));
+        assertEquals("file:////host/share/%E3%82%AB%E3%82%99.sqlite",
+                SqliteSchemaVersions.sqliteAddress(URI.create("file://host/share/\u30ab\u3099.sqlite")));
+    }
+
+    @Test
+    void sqliteAddressEncodesACharacterOutsideTheBasicPlaneAsOne() {
+        assertEquals("file:///D:/%F0%9F%93%81.sqlite",
+                SqliteSchemaVersions.sqliteAddress(URI.create("file:///D:/\ud83d\udcc1.sqlite")));
+    }
+
+    @Test
     void sqliteAddressMovesOnlyAUncHostIntoThePath() {
         assertEquals("file:////host/share/a%20b.sqlite",
                 SqliteSchemaVersions.sqliteAddress(URI.create("file://host/share/a%20b.sqlite")));
