@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -372,6 +374,100 @@ class WebResourceServerTest {
             assertNull(seen.get(), "an oversized form must not reach the handler");
         } finally {
             generous.dispose();
+        }
+    }
+
+    /** Chromium reads only after sending the whole body, so a response sent early has to survive until then. */
+    @Test
+    void aClientThatSendsTheWholeBodyBeforeReadingStillGetsAnEarlyResponse() throws Exception {
+        registry.register("refuse", request -> CompletableFuture.completedFuture(
+                WebResourceResponse.status(413, "Refused without reading the body.")));
+        WebResourceServer generous = new WebResourceServer(registry, PUBLIC_HOST,
+                WebResourceServer.Config.defaults().withPathHandoff(HANDOFF_PATH));
+        generous.start();
+        try {
+            assertEquals(413, statusAfterSendingAll(server, "/file/record/images/", "image/png"), "over the body limit");
+            assertEquals(413, statusAfterSendingAll(generous, HANDOFF_PATH, "application/x-www-form-urlencoded"),
+                    "over the form limit");
+            assertEquals(413, statusAfterSendingAll(generous, "/refuse/record/x", "image/png"), "handler didn't read");
+            assertEquals(404, statusAfterSendingAll(generous, "/nobody/record/x", "image/png"), "no such handler");
+        } finally {
+            generous.dispose();
+        }
+    }
+
+    private static int statusAfterSendingAll(WebResourceServer target, String path, String contentType)
+            throws IOException {
+        byte[] body = new byte[2 * 1024 * 1024];
+        try (Socket socket = new Socket(WebResourceAuth.BIND_HOST, target.port())) {
+            socket.setSoTimeout(10_000);
+            OutputStream out = socket.getOutputStream();
+            out.write(uploadHead(target, path, contentType, body.length));
+            out.write(body);
+            out.flush();
+            String statusLine = new String(socket.getInputStream().readNBytes(12), StandardCharsets.ISO_8859_1);
+            return Integer.parseInt(statusLine.substring(9, 12));
+        }
+    }
+
+    private static byte[] uploadHead(WebResourceServer target, String path, String contentType, long length) {
+        return ("POST " + path + " HTTP/1.1\r\nHost: " + WebResourceAuth.BIND_HOST + ":" + target.port()
+                + "\r\nCookie: " + WebResourceAuth.COOKIE_NAME + "=" + target.session().cookieValue()
+                + "\r\nContent-Type: " + contentType + "\r\nContent-Length: " + length + "\r\n\r\n")
+                .getBytes(StandardCharsets.ISO_8859_1);
+    }
+
+    /** Draining ends at the idle timeout, whether the client keeps sending or stops, so it can't hold a worker. */
+    @Test
+    void aBodyThatNeverEndsIsNotDrainedPastTheIdleTimeout() throws Exception {
+        WebResourceServer brief = new WebResourceServer(registry, PUBLIC_HOST, new WebResourceServer.Config(1, 4,
+                Duration.ofMillis(500), 4, 1024, Duration.ofSeconds(1), Duration.ofMillis(500), HANDOFF_PATH));
+        brief.start();
+        try {
+            assertServerHangsUp(brief, true);
+            assertServerHangsUp(brief, false);
+        } finally {
+            brief.dispose();
+        }
+    }
+
+    private static void assertServerHangsUp(WebResourceServer target, boolean keepSending) throws IOException {
+        try (Socket socket = new Socket(WebResourceAuth.BIND_HOST, target.port())) {
+            socket.setSoTimeout(10_000);
+            OutputStream out = socket.getOutputStream();
+            out.write(uploadHead(target, "/file/record/images/", "image/png", 1L << 40));
+            out.write(new byte[1024]);
+            if (keepSending) {
+                Thread feeder = new Thread(() -> {
+                    try {
+                        while (true) {
+                            out.write(new byte[1024]);
+                            Thread.sleep(50);
+                        }
+                    } catch (IOException | InterruptedException hungUp) {
+                        // The feeder ends once the server hangs up.
+                    }
+                });
+                feeder.setDaemon(true);
+                feeder.start();
+            }
+            try {
+                socket.getInputStream().readAllBytes();
+            } catch (SocketException reset) {
+                // A reset counts as hanging up; a SocketTimeoutException doesn't and fails the test.
+            }
+        }
+    }
+
+    /** A caller without the cookie gets no draining, or it could hold workers without authenticating. */
+    @Test
+    void aRejectedRequestIsNotDrained() throws Exception {
+        try (Socket socket = new Socket(WebResourceAuth.BIND_HOST, server.port())) {
+            socket.setSoTimeout(5_000);
+            socket.getOutputStream().write(("POST /file/record/x HTTP/1.1\r\nHost: " + WebResourceAuth.BIND_HOST + ":"
+                    + server.port() + "\r\nContent-Length: 1000000\r\n\r\nk=v").getBytes(StandardCharsets.ISO_8859_1));
+            String response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertTrue(response.startsWith("HTTP/1.1 403"), response);
         }
     }
 

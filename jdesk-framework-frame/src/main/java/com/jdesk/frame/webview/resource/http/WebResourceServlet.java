@@ -65,16 +65,21 @@ final class WebResourceServlet extends HttpServlet {
     private final transient String uploadToken;
     private final long maxBodyBytes;
     private final transient Duration handlerTimeout;
+    private final transient Duration drainLimit;
     private final AtomicInteger rejections = new AtomicInteger();
 
-    /** @param uploadToken hand-off token that a {@link WebResourceUploadForm} path list must carry to count */
+    /**
+     * @param uploadToken hand-off token that a {@link WebResourceUploadForm} path list must carry to count
+     * @param drainLimit  how long to keep reading a body left unread after the response
+     */
     WebResourceServlet(WebResourceSchemeRegistry registry, WebResourceAuth auth, String uploadToken,
-                       long maxBodyBytes, Duration handlerTimeout) {
+                       long maxBodyBytes, Duration handlerTimeout, Duration drainLimit) {
         this.registry = registry;
         this.auth = auth;
         this.uploadToken = uploadToken;
         this.maxBodyBytes = maxBodyBytes;
         this.handlerTimeout = handlerTimeout;
+        this.drainLimit = drainLimit;
     }
 
     /**
@@ -109,9 +114,15 @@ final class WebResourceServlet extends HttpServlet {
             }
             resp.setStatus(403);
             resp.setContentLength(0);
+            // Don't drain here: a caller without the cookie must not be able to hold a worker.
             return;
         }
         upgradeSessionCookie(req, resp);
+        serve(req, resp);
+        drainBody(req);
+    }
+
+    private void serve(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         if ("OPTIONS".equalsIgnoreCase(req.getMethod())) {
             resp.setStatus(405);
             resp.setContentLength(0);
@@ -162,6 +173,20 @@ final class WebResourceServlet extends HttpServlet {
             return;
         }
         write(req, resp, response, untrusted);
+    }
+
+    /** Must read to EOF: closing a socket with unread bytes resets it, and the reset can discard the response. */
+    private void drainBody(HttpServletRequest req) {
+        long deadline = System.nanoTime() + drainLimit.toNanos();
+        try {
+            InputStream body = req.getInputStream();
+            byte[] discarded = new byte[CHUNK];
+            while (body.read(discarded) >= 0 && System.nanoTime() - deadline < 0) {
+                // Keep reading until the client has sent everything.
+            }
+        } catch (IOException gone) {
+            LOG.debug("web.resources.drain.stopped path={}", req.getRequestURI(), gone);
+        }
     }
 
     private WebResourceRequest toRequest(HttpServletRequest req, WebResourceRoute route) throws IOException {

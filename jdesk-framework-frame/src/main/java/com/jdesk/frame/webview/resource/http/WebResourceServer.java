@@ -32,6 +32,7 @@ public final class WebResourceServer implements Disposable {
     /**
      * Threads, timeouts, limits and the path hand-off address; start from {@link #defaults()} and add
      * {@link #withPathHandoff} as needed. {@code handlerTimeout} bounds a request's wait for its handler: 504 after it.
+     * {@code idleTimeout} also bounds reading a body left unread after the response.
      */
     public record Config(int minThreads, int maxThreads, Duration idleTimeout, int maxConcurrentRequests,
                          long maxRequestBodyBytes, Duration stopTimeout, Duration handlerTimeout,
@@ -118,7 +119,7 @@ public final class WebResourceServer implements Disposable {
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
         context.addServlet(new ServletHolder(new WebResourceServlet(registry, pendingAuth, pendingUploadToken,
-                config.maxRequestBodyBytes(), config.handlerTimeout())), "/*");
+                config.maxRequestBodyBytes(), config.handlerTimeout(), config.idleTimeout())), "/*");
         QoSHandler qos = new QoSHandler(context);
         qos.setMaxRequestCount(config.maxConcurrentRequests());
         jetty.setHandler(qos);
