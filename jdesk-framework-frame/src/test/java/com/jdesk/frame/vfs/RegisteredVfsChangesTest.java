@@ -12,9 +12,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -69,7 +71,7 @@ class RegisteredVfsChangesTest {
             Files.createDirectory(root.resolve("before"));
             var folder = catalog.registerFile(rootId, "before", true);
             var child = file("before/child.md");
-            Files.move(root.resolve("before"), root.resolve("after"));
+            moveOnceReleased(root.resolve("before"), root.resolve("after"));
             before = List.of(folder, child);
             after = List.of(catalog.moveFile(folder.fileId(), rootId, "after"),
                     catalog.moveFile(child.fileId(), rootId, "after/child.md"));
@@ -189,6 +191,23 @@ class RegisteredVfsChangesTest {
         Files.writeString(root.resolve(relative), "body");
         return catalog.registerFile(rootId, relative, false);
     }
+
+    /** Renames a directory holding a fresh file; Windows briefly denies that rename after the file is written. */
+    private static void moveOnceReleased(Path from, Path to) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (true) {
+            try {
+                Files.move(from, to);
+                return;
+            } catch (AccessDeniedException held) {
+                if (System.nanoTime() > deadline) {
+                    throw held;
+                }
+                Thread.sleep(10);
+            }
+        }
+    }
+
     private VfsScanResult change(List<VfsManagedFile> added, List<VfsManagedFile> updated, List<VfsManagedFile> missing) {
         return new VfsScanResult(rootId, added, updated, missing, 0);
     }
