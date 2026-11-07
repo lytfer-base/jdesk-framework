@@ -4,9 +4,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,7 +23,7 @@ class AtomicFilesExistingRootTest {
         Path target = parent.resolve("note.md");
         Files.writeString(target, "original");
         Path moved = run.resolve("moved");
-        Files.move(root, moved);
+        moveOnceReleased(root, moved);
         AtomicBoolean called = new AtomicBoolean();
         try (var scope = PathAccessPolicy.existingRoot(root).enter()) {
             assertThrows(IOException.class, () -> AtomicFiles.write(target, "late".getBytes(), () -> {
@@ -75,5 +77,21 @@ class AtomicFilesExistingRootTest {
         Path target = run.resolve("new/parents/note.md");
         AtomicFiles.write(target, "default".getBytes());
         assertEquals("default", Files.readString(target));
+    }
+
+    /** Renames a directory holding a fresh file; Windows briefly denies that rename after the file is written. */
+    private static void moveOnceReleased(Path from, Path to) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (true) {
+            try {
+                Files.move(from, to);
+                return;
+            } catch (AccessDeniedException held) {
+                if (System.nanoTime() > deadline) {
+                    throw held;
+                }
+                Thread.sleep(10);
+            }
+        }
     }
 }
