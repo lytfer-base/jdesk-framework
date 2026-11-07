@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -49,13 +50,13 @@ class HistoryExistingRootTest {
     void strictOpenDoesNotCreateAMovedRootAndCanRetryAfterItReturns() throws Exception {
         Path root = prepare();
         Path moved = run.resolve("moved");
-        Files.move(root, moved);
+        moveOnceReleased(root, moved);
         try (var scope = PathAccessPolicy.existingRoot(root).enter()) {
             assertThrows(RuntimeException.class, () -> open(root));
             assertTrue(service.findOpenStore("scope").isEmpty());
         }
         assertFalse(Files.exists(root));
-        Files.move(moved, root);
+        moveOnceReleased(moved, root);
         try (var scope = PathAccessPolicy.existingRoot(root).enter()) {
             assertTrue(open(root).stats().available());
         }
@@ -315,6 +316,22 @@ class HistoryExistingRootTest {
         open(root);
         service.closeStore("scope");
         return root;
+    }
+
+    /** Renames a directory holding a fresh file; Windows briefly denies that rename after the file is written. */
+    private static void moveOnceReleased(Path from, Path to) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (true) {
+            try {
+                Files.move(from, to);
+                return;
+            } catch (AccessDeniedException held) {
+                if (System.nanoTime() > deadline) {
+                    throw held;
+                }
+                Thread.sleep(10);
+            }
+        }
     }
 
     private LocalHistoryStore open(Path root) {
