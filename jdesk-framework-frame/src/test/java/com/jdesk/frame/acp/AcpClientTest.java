@@ -204,6 +204,22 @@ class AcpClientTest {
     }
 
     @Test
+    void onSentRunsOnceThePromptFrameIsOutAndBeforeTheTurnEnds() {
+        assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+            startClient();
+            client.initialize("acp-test", "0.1");
+            String sessionId = client.newSession(tempDir.toString(), null).path("sessionId").asText();
+            var blocks = client.mapper().createArrayNode();
+            blocks.addObject().put("type", "text").put("text", "慢工出细活");
+
+            // The fake agent holds this turn until a cancel arrives, so the prompt ends only if onSent ran in between.
+            JsonNode outcome = client.prompt(sessionId, blocks, 30, () -> client.cancelSession(sessionId));
+
+            assertEquals("cancelled", outcome.path("stopReason").asText());
+        });
+    }
+
+    @Test
     void protocolErrorSurfacesAsAcpRequestException() {
         assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
             startClient();

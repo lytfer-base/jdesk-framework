@@ -90,6 +90,10 @@ public final class AcpClient {
      * @throws AcpRequestException on a protocol error, a timeout, an interrupt or an exited process
      */
     public JsonNode request(String method, ObjectNode params, long timeoutSec) {
+        return request(method, params, timeoutSec, () -> { });
+    }
+
+    private JsonNode request(String method, ObjectNode params, long timeoutSec, Runnable onSent) {
         long id = nextId.getAndIncrement();
         ObjectNode msg = mapper.createObjectNode();
         msg.put("jsonrpc", "2.0");
@@ -104,6 +108,7 @@ public final class AcpClient {
             pending.put(id, future);
         }
         send(msg);
+        onSent.run();
         JsonNode result;
         try {
             result = future.get(timeoutSec, TimeUnit.SECONDS);
@@ -157,10 +162,18 @@ public final class AcpClient {
 
     /** Sends a prompt made of ACP content blocks: text, or image with base64 data and a mimeType. */
     public JsonNode prompt(String sessionId, ArrayNode promptBlocks, long timeoutSec) {
+        return prompt(sessionId, promptBlocks, timeoutSec, () -> { });
+    }
+
+    /**
+     * Like {@link #prompt(String, ArrayNode, long)}, running {@code onSent} on the calling thread once the frame is
+     * written and before waiting for the turn to end. {@code onSent} must not throw.
+     */
+    public JsonNode prompt(String sessionId, ArrayNode promptBlocks, long timeoutSec, Runnable onSent) {
         ObjectNode params = mapper.createObjectNode();
         params.put("sessionId", sessionId);
         params.set("prompt", promptBlocks == null ? mapper.createArrayNode() : promptBlocks);
-        return request("session/prompt", params, timeoutSec);
+        return request("session/prompt", params, timeoutSec, onSent);
     }
 
     /** Loads an existing session, replaying its history as session/update notifications; the result carries modes. */
@@ -186,7 +199,10 @@ public final class AcpClient {
         request("session/delete", params, 30);
     }
 
-    /** Cancels the current turn by notification; the pending session/prompt should end with stopReason=cancelled. */
+    /**
+     * Cancels the current turn by notification; the pending session/prompt should end with stopReason=cancelled.
+     * Don't send it before the prompt frame is written: an agent drops a cancel for a turn it hasn't received.
+     */
     public void cancelSession(String sessionId) {
         ObjectNode params = mapper.createObjectNode();
         params.put("sessionId", sessionId);
