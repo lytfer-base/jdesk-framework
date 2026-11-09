@@ -49,7 +49,7 @@ import java.util.UUID;
  * SQLite implementation of one scope's managed VFS catalog. Its tables live in the supplied database, which may also
  * hold the caller's own tables; the caller owns that database and closes it.
  */
-public final class SqliteVfsCatalog implements VfsCatalog {
+public final class SqliteVfsCatalog implements VfsCatalog.IdentityEditor {
 
     private static final Logger LOG = LoggerFactory.getLogger(SqliteVfsCatalog.class);
 
@@ -165,6 +165,144 @@ public final class SqliteVfsCatalog implements VfsCatalog {
                 .orElseGet(() -> insertFile(session, rootId, normalizedRelativePath, directory)));
     }
 
+    @Override
+    public VfsManagedFile registerFileWithId(VfsRootId rootId, String relativePath, boolean directory,
+                                              VfsFileId fileId) {
+        checkOpen();
+        Objects.requireNonNull(rootId, "rootId");
+        requireUuid(fileId);
+        String normalized = VfsManagedFile.normalizeRelativePath(relativePath);
+        return database.transaction(session -> registerFileWithId(session, rootId, normalized, directory, fileId));
+    }
+
+    private VfsManagedFile registerFileWithId(DatabaseSession session, VfsRootId rootId, String relativePath,
+                                              boolean directory, VfsFileId fileId) {
+        Optional<VfsManagedFile> known = findFile(session, fileId);
+        if (known.isPresent()) {
+            VfsManagedFile row = known.get();
+            if (!row.rootId().equals(rootId) || !row.relativePath().equals(relativePath)
+                    || row.directory() != directory) {
+                throw new StorageException("VFS identity is already assigned to another entry");
+            }
+            return row;
+        }
+        if (findFile(session, rootId, relativePath).isPresent()) {
+            throw new StorageException("VFS path is already assigned to another identity");
+        }
+        if (findRoot(session, rootId).isEmpty()) {
+            throw new StorageException("VFS root not found");
+        }
+        return insertRow(session, rootId, relativePath, directory, VfsFileStatus.MISSING, 0, 0, 0, "", fileId);
+    }
+
+    @Override
+    public VfsManagedFile rekeyFile(VfsFileId fileId, VfsFileId newFileId) {
+        checkOpen();
+        Objects.requireNonNull(fileId, "fileId");
+        requireUuid(newFileId);
+        return database.transaction(session -> rekeyFile(session, fileId, newFileId));
+    }
+
+    private VfsManagedFile rekeyFile(DatabaseSession session, VfsFileId fileId, VfsFileId newFileId) {
+        VfsManagedFile existing = findFile(session, fileId)
+                .orElseThrow(() -> new StorageException("VFS source identity not found"));
+        if (fileId.equals(newFileId)) {
+            return existing;
+        }
+        if (findFile(session, newFileId).isPresent()) {
+            throw new StorageException("VFS target identity is already assigned");
+        }
+        session.update("update jdesk_vfs_files set file_id = ? where file_id = ?", newFileId.value(), fileId.value());
+        return findFile(session, newFileId).orElseThrow(() -> new StorageException("VFS rekeyed row not found"));
+    }
+
+    private static void requireUuid(VfsFileId fileId) {
+        Objects.requireNonNull(fileId, "fileId");
+        if (!UUID.fromString(fileId.value()).toString().equals(fileId.value())) {
+            throw new IllegalArgumentException("A canonical lowercase UUID is required");
+        }
+    }
+
+    /** Returns a view bound to this handle's active write transaction; rejects other sessions and threads. */
+    public VfsCatalogTransaction inTransaction(DatabaseSession session) {
+        checkOpen();
+        database.requireWriteTransaction(session);
+        return new TransactionView(session);
+    }
+
+    private final class TransactionView implements VfsCatalogTransaction {
+        private final DatabaseSession session;
+
+        private TransactionView(DatabaseSession session) {
+            this.session = session;
+        }
+
+        private void check() {
+            checkOpen();
+            database.requireWriteTransaction(session);
+        }
+
+        @Override
+        public VfsManagedFile registerFileWithId(VfsRootId rootId, String path, boolean directory, VfsFileId fileId) {
+            check();
+            Objects.requireNonNull(rootId, "rootId");
+            requireUuid(fileId);
+            return SqliteVfsCatalog.this.registerFileWithId(session, rootId,
+                    VfsManagedFile.normalizeRelativePath(path), directory, fileId);
+        }
+
+        @Override
+        public VfsManagedFile rekeyFile(VfsFileId fileId, VfsFileId newFileId) {
+            check();
+            Objects.requireNonNull(fileId, "fileId");
+            requireUuid(newFileId);
+            return SqliteVfsCatalog.this.rekeyFile(session, fileId, newFileId);
+        }
+
+
+        @Override
+        public Optional<VfsManagedFile> findFile(VfsFileId fileId) {
+            check();
+            return SqliteVfsCatalog.findFile(session, Objects.requireNonNull(fileId, "fileId"));
+        }
+
+        @Override
+        public Optional<VfsManagedFile> findFile(VfsRootId rootId, String path) {
+            check();
+            Objects.requireNonNull(rootId, "rootId");
+            return SqliteVfsCatalog.findFile(session, rootId, VfsManagedFile.normalizeRelativePath(path));
+        }
+
+
+        @Override
+        public VfsManagedFile updateStatus(VfsFileId fileId, VfsFileStatus status) {
+            check();
+            Objects.requireNonNull(fileId, "fileId");
+            Objects.requireNonNull(status, "status");
+            return SqliteVfsCatalog.this.updateStatus(session, fileId, status);
+        }
+
+        @Override
+        public boolean setReadOnly(VfsFileId fileId, boolean readOnly) {
+            check();
+            return SqliteVfsCatalog.this.setReadOnly(session, Objects.requireNonNull(fileId, "fileId"), readOnly);
+        }
+
+        @Override
+        public void removeFile(VfsFileId fileId) {
+            check();
+            SqliteVfsCatalog.this.removeFile(session, Objects.requireNonNull(fileId, "fileId"));
+        }
+
+        @Override
+        public void removeFiles(Collection<VfsFileId> fileIds) {
+            check();
+            Objects.requireNonNull(fileIds, "fileIds");
+            SqliteVfsCatalog.this.removeFiles(session, fileIds.stream().map(VfsFileId::value).toList(), DELETE_BATCH_SIZE);
+        }
+
+    }
+
     /**
      * Reconciles a registered row with the disk: a path not on disk is MISSING, already MISSING returns unchanged,
      * and a steady row returns without a write ({@code registerFileDoesNotWriteWhenNothingChanged}).
@@ -278,18 +416,20 @@ public final class SqliteVfsCatalog implements VfsCatalog {
         checkOpen();
         Objects.requireNonNull(fileId, "fileId");
         Objects.requireNonNull(status, "status");
-        return database.transaction(session -> {
-            if (findFile(session, fileId).isEmpty()) {
-                throw new StorageException("VFS file not found: " + fileId.value());
-            }
-            session.update("""
-                    update jdesk_vfs_files
-                    set status = ?, content_version = content_version + 1, updated_at = ?
-                    where file_id = ?
-                    """, status.name(), now(), fileId.value());
-            return findFile(session, fileId)
-                    .orElseThrow(() -> new StorageException("VFS file disappeared after status update: " + fileId.value()));
-        });
+        return database.transaction(session -> updateStatus(session, fileId, status));
+    }
+
+    private VfsManagedFile updateStatus(DatabaseSession session, VfsFileId fileId, VfsFileStatus status) {
+        if (findFile(session, fileId).isEmpty()) {
+            throw new StorageException("VFS file not found: " + fileId.value());
+        }
+        session.update("""
+                update jdesk_vfs_files
+                set status = ?, content_version = content_version + 1, updated_at = ?
+                where file_id = ?
+                """, status.name(), now(), fileId.value());
+        return findFile(session, fileId)
+                .orElseThrow(() -> new StorageException("VFS file disappeared after status update: " + fileId.value()));
     }
 
     /** Sets the flag; don't bump {@code content_version} here, or caches keyed on it are invalidated for nothing. */
@@ -297,9 +437,16 @@ public final class SqliteVfsCatalog implements VfsCatalog {
     public boolean setReadOnly(VfsFileId fileId, boolean readOnly) {
         checkOpen();
         Objects.requireNonNull(fileId, "fileId");
-        return database.transaction(session -> session.update(
-                "update jdesk_vfs_files set read_only = ?, updated_at = ? where file_id = ?",
-                readOnly, now(), fileId.value()) > 0);
+        return database.transaction(session -> setReadOnly(session, fileId, readOnly));
+    }
+
+    private boolean setReadOnly(DatabaseSession session, VfsFileId fileId, boolean readOnly) {
+        return session.update("update jdesk_vfs_files set read_only = ?, updated_at = ? where file_id = ?",
+                readOnly, now(), fileId.value()) > 0;
+    }
+
+    private void removeFile(DatabaseSession session, VfsFileId fileId) {
+        session.update("delete from jdesk_vfs_files where file_id = ?", fileId.value());
     }
 
     /** Deletes one managed file row. */
@@ -308,7 +455,7 @@ public final class SqliteVfsCatalog implements VfsCatalog {
         checkOpen();
         Objects.requireNonNull(fileId, "fileId");
         database.transaction(session -> {
-            session.update("delete from jdesk_vfs_files where file_id = ?", fileId.value());
+            removeFile(session, fileId);
             return null;
         });
     }
@@ -332,13 +479,17 @@ public final class SqliteVfsCatalog implements VfsCatalog {
             return;
         }
         database.transaction(session -> {
-            for (int from = 0; from < values.size(); from += batchSize) {
-                List<String> batch = values.subList(from, Math.min(from + batchSize, values.size()));
-                session.update("delete from jdesk_vfs_files where file_id in (" + placeholders(batch.size()) + ")",
-                        batch.toArray());
-            }
+            removeFiles(session, values, batchSize);
             return null;
         });
+    }
+
+    private void removeFiles(DatabaseSession session, List<String> values, int batchSize) {
+        for (int from = 0; from < values.size(); from += batchSize) {
+            List<String> batch = values.subList(from, Math.min(from + batchSize, values.size()));
+            session.update("delete from jdesk_vfs_files where file_id in (" + placeholders(batch.size()) + ")",
+                    batch.toArray());
+        }
     }
 
     /** Returns {@code count} comma-separated placeholders; ids are always bound, never spliced into the SQL. */
@@ -1056,7 +1207,13 @@ public final class SqliteVfsCatalog implements VfsCatalog {
     private VfsManagedFile insertRow(DatabaseSession session, VfsRootId rootId, String relativePath,
                                      boolean directory, VfsFileStatus status, long size, long modifiedAt,
                                      long fileCreatedAt, String nativeFileId) {
-        VfsFileId fileId = VfsFileId.of(UUID.randomUUID().toString());
+        return insertRow(session, rootId, relativePath, directory, status, size, modifiedAt, fileCreatedAt,
+                nativeFileId, VfsFileId.of(UUID.randomUUID().toString()));
+    }
+
+    private VfsManagedFile insertRow(DatabaseSession session, VfsRootId rootId, String relativePath,
+                                     boolean directory, VfsFileStatus status, long size, long modifiedAt,
+                                     long fileCreatedAt, String nativeFileId, VfsFileId fileId) {
         String fileName = fileNameOf(relativePath);
         long now = now();
         session.update("""

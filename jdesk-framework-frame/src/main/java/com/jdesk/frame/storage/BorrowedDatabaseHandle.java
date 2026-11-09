@@ -30,6 +30,11 @@ final class BorrowedDatabaseHandle implements DatabaseHandle {
     }
 
     @Override
+    public void requireWriteTransaction(DatabaseSession session) {
+        shared.requireWriteTransaction(session);
+    }
+
+    @Override
     public String id() {
         return shared.id();
     }

@@ -1,21 +1,28 @@
 package com.jdesk.frame.storage.sqlite;
 
 import com.jdesk.frame.storage.DatabaseTransaction;
+import com.jdesk.frame.storage.StorageException;
 
 import java.sql.Connection;
 
-/**
- * SQLite transaction session marker.
- *
- * <p>Commit and rollback are controlled by {@link SqliteDatabaseHandle}; this
- * class only narrows the session type exposed to transaction callbacks.
- */
+/** A write transaction bound to its owner, callback lifetime, and writer thread. */
 final class SqliteDatabaseTransaction extends SqliteDatabaseSession implements DatabaseTransaction {
+    private final SqliteDatabaseHandle owner;
+    private final Thread thread = Thread.currentThread();
+    private volatile boolean active = true;
 
-    /**
-     * Wraps the transaction connection managed by the owning handle.
-     */
-    SqliteDatabaseTransaction(Connection connection) {
+    SqliteDatabaseTransaction(Connection connection, SqliteDatabaseHandle owner) {
         super(connection);
+        this.owner = owner;
+    }
+
+    void requireOwner(SqliteDatabaseHandle expected) {
+        if (owner != expected || !active || Thread.currentThread() != thread) {
+            throw new StorageException("Transaction belongs to another handle, thread, or completed callback");
+        }
+    }
+
+    void finish() {
+        active = false;
     }
 }

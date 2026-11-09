@@ -303,8 +303,14 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         rejectNestedWrite();
         return await(writerExecutor.submit(contextualCall(() -> {
             try (Connection connection = openConnection()) {
-                return SqliteTransactions.run(connection,
-                        () -> callback.run(new SqliteDatabaseTransaction(connection)));
+                return SqliteTransactions.run(connection, () -> {
+                    SqliteDatabaseTransaction session = new SqliteDatabaseTransaction(connection, this);
+                    try {
+                        return callback.run(session);
+                    } finally {
+                        session.finish();
+                    }
+                });
             } catch (SQLException e) {
                 throw new StorageException("Transaction failed for database: " + id(), e);
             }
@@ -506,6 +512,14 @@ final class SqliteDatabaseHandle implements DatabaseHandle {
         if (disposed) {
             throw new StorageException("Database is disposed: " + id());
         }
+    }
+
+    @Override
+    public void requireWriteTransaction(com.jdesk.frame.storage.DatabaseSession session) {
+        if (!(session instanceof SqliteDatabaseTransaction transaction)) {
+            throw new StorageException("An active write transaction is required");
+        }
+        transaction.requireOwner(this);
     }
 
     /** Fails fast on a synchronous write from a write callback, which would deadlock the single writer thread. */

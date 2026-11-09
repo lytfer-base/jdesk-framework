@@ -11,6 +11,21 @@ import java.util.Optional;
  */
 public interface VfsCatalog extends AutoCloseable {
 
+    /** Optional catalog capability for caller-assigned, canonical UUID identities. */
+    interface IdentityEditor extends VfsCatalog {
+        /**
+         * Reserves a MISSING row without inspecting disk; an exact ID/root/path/kind retry returns the row unchanged.
+         * Rejects an occupied ID or path, an unknown root, and a non-canonical UUID.
+         */
+        VfsManagedFile registerFileWithId(VfsRootId rootId, String relativePath, boolean directory, VfsFileId fileId);
+
+        /**
+         * Changes only the catalog ID, preserving every other column; rejects a missing source or occupied target.
+         * The new ID must be a canonical UUID. Callers own updates to any dependent records.
+         */
+        VfsManagedFile rekeyFile(VfsFileId fileId, VfsFileId newFileId);
+    }
+
     /**
      * Returns the ID of the scope this catalog belongs to.
      */

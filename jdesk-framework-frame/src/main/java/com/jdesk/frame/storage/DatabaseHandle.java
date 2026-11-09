@@ -14,6 +14,11 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface DatabaseHandle extends Disposable, AutoCloseable {
 
+    /** Rejects a session unless it is this handle's active write transaction on the current thread. */
+    default void requireWriteTransaction(DatabaseSession session) {
+        throw new StorageException("This handle cannot validate transaction ownership");
+    }
+
     /**
      * Returns the descriptor id used to register this database resource.
      */
