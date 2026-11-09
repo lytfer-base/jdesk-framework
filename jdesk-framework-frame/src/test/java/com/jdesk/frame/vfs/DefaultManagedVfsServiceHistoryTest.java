@@ -250,6 +250,36 @@ class DefaultManagedVfsServiceHistoryTest {
     }
 
     @Test
+    void measuredDirectoryPageFeedsOnlySuppliedBytesAndLeavesUnlistedRowsAlone(@TempDir Path root) throws Exception {
+        String scope = "scope.page";
+        Files.writeString(root.resolve("a.md"), "old");
+        Files.writeString(root.resolve("outside.md"), "not in the page");
+        Fixture fx = open(root, scope);
+        try {
+            fx.service().reconcile(scope, fx.rootId(), ALL);
+            VfsManagedFile before = fx.catalog().findFile(fx.rootId(), "a.md").orElseThrow();
+            Files.delete(root.resolve("outside.md"));
+            byte[] verified = {1, 2, 3};
+            var change = new com.jdesk.core.vfs.ManagedVfsService.DirectoryObservation("a.md", false,
+                    before.size(), before.modifiedAt(), before.fileCreatedAt(), "", before, true, verified);
+
+            VfsScanResult applied = fx.service().reconcileDirectory(scope, fx.rootId(), "", List.of(change));
+
+            assertEquals(before.contentVersion() + 1, applied.updated().get(0).contentVersion());
+            assertEquals(List.of(), applied.missing());
+            assertEquals(com.jdesk.core.vfs.VfsFileStatus.PRESENT,
+                    fx.catalog().findFile(fx.rootId(), "outside.md").orElseThrow().status());
+            assertEquals(List.of("a.md"), fx.store().capturedPaths());
+            var capture = fx.store().captures.get(0);
+            assertEquals(HistorySource.EXTERNAL, capture.source());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(verified,
+                    ((com.jdesk.core.history.ContentSource.Bytes) capture.content()).data());
+        } finally {
+            fx.service().dispose();
+        }
+    }
+
+    @Test
     void reconcileBaselinesSmallTextOnlyAndCapturesChangedFilesWithHistory(@TempDir Path root) throws Exception {
         Files.writeString(root.resolve("a.md"), "small");
         Files.write(root.resolve("big.md"), new byte[70 * 1024]);

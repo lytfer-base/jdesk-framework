@@ -87,4 +87,15 @@ public interface ManagedVfsService {
      * cancelled walk throws {@link java.util.concurrent.CancellationException} and writes nothing.
      */
     VfsScanResult reconcile(String scopeId, VfsRootId rootId, ScanFilter filter);
+
+    /** One already measured entry. A previous row is an optimistic precondition, including for a move. */
+    record DirectoryObservation(String relativePath, boolean directory, long size, long modifiedAt, long createdAt,
+                                String nativeFileId, VfsManagedFile previous, boolean bytesChanged, byte[] historyBytes) {
+    }
+
+    /** Reconciles a measured page of direct children; only supplied bytes enter external history. */
+    default VfsScanResult reconcileDirectory(String scopeId, VfsRootId rootId, String directory,
+                                             List<DirectoryObservation> observations) {
+        throw new UnsupportedOperationException("Measured directory reconciliation is not supported");
+    }
 }

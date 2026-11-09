@@ -683,6 +683,63 @@ public final class SqliteVfsCatalog implements VfsCatalog.IdentityEditor {
         });
     }
 
+    VfsScanResult reconcileDirectory(VfsRootId rootId, String directory,
+                                     List<com.jdesk.core.vfs.ManagedVfsService.DirectoryObservation> observations) {
+        checkOpen();
+        String base = directory.isEmpty() ? "" : VfsManagedFile.normalizeRelativePath(directory);
+        if (observations.size() > 5000) throw new IllegalArgumentException("Directory page is too large");
+        return database.transaction(session -> {
+            if (findRoot(session, rootId).isEmpty()) throw new StorageException("VFS root not found");
+            var added = new ArrayList<VfsManagedFile>();
+            var updated = new ArrayList<VfsManagedFile>();
+            var missing = new ArrayList<VfsManagedFile>();
+            int unchanged = 0;
+            var paths = new HashSet<String>();
+            for (var observation : observations) {
+                String path = VfsManagedFile.normalizeRelativePath(observation.relativePath());
+                if (!base.equals(parentPathOf(path)) || !paths.add(path) || observation.size() < 0
+                        || observation.directory() && observation.size() != 0) {
+                    throw new IllegalArgumentException("Invalid measured directory entry");
+                }
+                var before = observation.previous();
+                var occupant = findFile(session, rootId, path);
+                var entry = new ScannedEntry(path, observation.directory(), observation.size(), observation.modifiedAt(),
+                        observation.createdAt(), Objects.toString(observation.nativeFileId(), ""));
+                if (before == null) {
+                    if (occupant.isPresent()) throw new StorageException("Measured path was concurrently assigned");
+                    added.add(insertRow(session, rootId, path, entry.directory(), VfsFileStatus.PRESENT,
+                            entry.size(), entry.modifiedAt(), entry.createdAt(), entry.nativeFileId()));
+                    continue;
+                }
+                if (!before.rootId().equals(rootId) || !findFile(session, before.fileId()).filter(before::equals).isPresent()
+                        || before.directory() != entry.directory()) {
+                    throw new StorageException("Measured directory entry is stale");
+                }
+                if (!path.equals(before.relativePath())) {
+                    if (occupant.isPresent() || entry.nativeFileId().isEmpty() || !session.queryOne(
+                            "select native_file_id from jdesk_vfs_files where file_id=?",
+                            row -> row.getString("native_file_id"), before.fileId().value()).filter(entry.nativeFileId()::equals).isPresent()) {
+                        throw new StorageException("Measured move does not match the previous identity");
+                    }
+                    missing.add(before);
+                    added.add(relocate(session, before, entry));
+                    continue;
+                }
+                boolean changed = !entry.directory() && (observation.bytesChanged() || before.size() != entry.size()
+                        || before.modifiedAt() != entry.modifiedAt());
+                refreshNativeId(session, before.fileId(), entry.nativeFileId());
+                if (before.status() != VfsFileStatus.PRESENT) {
+                    added.add(updateScanned(session, before.fileId(), entry, changed));
+                } else if (changed || before.modifiedAt() != entry.modifiedAt() || before.fileCreatedAt() != entry.createdAt()) {
+                    updated.add(updateScanned(session, before.fileId(), entry, changed));
+                } else {
+                    unchanged++;
+                }
+            }
+            return new VfsScanResult(rootId, added, updated, missing, unchanged);
+        });
+    }
+
     /** Marks the PRESENT rows under a vanished directory MISSING; a non-recursive pass can't see them otherwise. */
     private List<VfsManagedFile> markSubtreeMissing(DatabaseSession session, VfsRootId rootId, String dirPath) {
         List<VfsManagedFile> rows = session.queryList(

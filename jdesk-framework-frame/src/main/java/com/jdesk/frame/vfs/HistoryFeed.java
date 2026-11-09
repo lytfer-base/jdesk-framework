@@ -32,15 +32,27 @@ final class HistoryFeed {
 
     /** Feeds one reconcile result; with {@code baselinePass}, rows without history go to {@link #baselineTree}. */
     static void feed(LocalHistoryStore store, VfsScanResult result, HistorySource source, boolean baselinePass) {
+        feed(store, result, source, baselinePass, file -> ContentSource.disk(file.absolutePath()));
+    }
+
+    static void feedMeasured(LocalHistoryStore store, VfsScanResult result, Map<String, byte[]> measured) {
+        feed(store, result, HistorySource.EXTERNAL, false, file -> {
+            byte[] bytes = measured.get(file.relativePath());
+            return bytes == null ? null : ContentSource.bytes(bytes);
+        });
+    }
+
+    private static void feed(LocalHistoryStore store, VfsScanResult result, HistorySource source, boolean baselinePass,
+                             java.util.function.Function<VfsManagedFile, ContentSource> contents) {
         long now = System.currentTimeMillis();
         // Fetch all heads at once: asking per file opens a connection each time.
         Set<String> heads = baselinePass ? store.keysWithHead(VfsHistoryKeys.FILE_KIND) : Set.of();
         List<CaptureRequest> captures = new ArrayList<>();
         for (VfsManagedFile file : result.added()) {
-            offer(captures, file, source, baselinePass, heads);
+            offer(captures, file, source, baselinePass, heads, contents);
         }
         for (VfsManagedFile file : result.updated()) {
-            offer(captures, file, source, baselinePass, heads);
+            offer(captures, file, source, baselinePass, heads, contents);
         }
         // Submit in bulk and don't wait: this thread is shared, and each separate call opens a connection.
         if (!captures.isEmpty()) {
@@ -63,7 +75,8 @@ final class HistoryFeed {
     }
 
     private static void offer(List<CaptureRequest> captures, VfsManagedFile file, HistorySource source,
-                              boolean baselinePass, Set<String> heads) {
+                              boolean baselinePass, Set<String> heads,
+                              java.util.function.Function<VfsManagedFile, ContentSource> contents) {
         if (!isFile(file)) {
             return;
         }
@@ -71,7 +84,8 @@ final class HistoryFeed {
         if (baselinePass && !heads.contains(key.id())) {
             return;
         }
-        captures.add(request(key, file, source));
+        ContentSource content = contents.apply(file);
+        if (content != null) captures.add(CaptureRequest.of(key, file.relativePath(), content, source));
     }
 
     /** Captures a file its writer just saved. */

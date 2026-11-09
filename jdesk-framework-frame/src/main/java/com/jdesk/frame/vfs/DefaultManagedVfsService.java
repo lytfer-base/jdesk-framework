@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -589,6 +590,31 @@ public final class DefaultManagedVfsService implements ManagedVfsService, Dispos
 
     private VfsCatalog requireCatalog(String scopeId) {
         return requireEntry(scopeId).catalog();
+    }
+
+    @Override
+    public VfsScanResult reconcileDirectory(String scopeId, VfsRootId rootId, String directory,
+                                            List<DirectoryObservation> observations) {
+        checkUsable();
+        Entry entry = requireEntry(scopeId);
+        List<DirectoryObservation> page = List.copyOf(observations);
+        synchronized (entry.order()) {
+            VfsScanResult result = ((SqliteVfsCatalog) entry.catalog()).reconcileDirectory(rootId, directory, page);
+            Map<String, byte[]> history = new HashMap<>();
+            for (DirectoryObservation row : page) {
+                if (row.historyBytes() != null) history.put(row.relativePath(), row.historyBytes());
+            }
+            try {
+                historyFor(scopeId).ifPresent(store -> HistoryFeed.feedMeasured(store, result, history));
+            } catch (RuntimeException failure) {
+                LOG.warn("vfs.history.feedFailed scope={}", scopeId, failure);
+            }
+            if (registrations.containsKey(scopeId)
+                    && !(result.added().isEmpty() && result.updated().isEmpty() && result.missing().isEmpty())) {
+                publish.accept(scopeId, result);
+            }
+            return result;
+        }
     }
 
     private Entry requireEntry(String scopeId) {
