@@ -259,6 +259,54 @@ public final class SqliteVfsCatalog implements VfsCatalog.IdentityEditor {
             return SqliteVfsCatalog.this.rekeyFile(session, fileId, newFileId);
         }
 
+        @Override
+        public VfsManagedFile applyObservation(VfsFileId fileId, long size, long modifiedAt,
+                                               long fileCreatedAt, String nativeFileId) {
+            check();
+            Objects.requireNonNull(fileId, "fileId");
+            VfsManagedFile current = SqliteVfsCatalog.findFile(session, fileId)
+                    .orElseThrow(() -> new StorageException("VFS file not found: " + fileId.value()));
+            if (current.directory() && size != 0) {
+                throw new IllegalArgumentException("Directory size must be zero");
+            }
+            boolean changed = !current.directory()
+                    && (current.size() != size || current.modifiedAt() != modifiedAt);
+            ScannedEntry entry = new ScannedEntry(current.relativePath(), current.directory(), size,
+                    modifiedAt, fileCreatedAt, nativeFileId);
+            refreshNativeId(session, fileId, nativeFileId);
+            return updateScanned(session, fileId, entry, changed);
+        }
+
+        @Override
+        public VfsManagedFile relocateFile(VfsFileId fileId, VfsRootId rootId, String relativePath) {
+            check();
+            Objects.requireNonNull(fileId, "fileId");
+            Objects.requireNonNull(rootId, "rootId");
+            String normalized = VfsManagedFile.normalizeRelativePath(relativePath);
+            VfsManagedFile current = SqliteVfsCatalog.findFile(session, fileId)
+                    .orElseThrow(() -> new StorageException("VFS file not found: " + fileId.value()));
+            if (findRoot(session, rootId).isEmpty()) {
+                throw new StorageException("VFS root not found: " + rootId.value());
+            }
+            if (current.rootId().equals(rootId) && current.relativePath().equals(normalized)) {
+                return current;
+            }
+            if (SqliteVfsCatalog.findFile(session, rootId, normalized)
+                    .filter(row -> !row.fileId().equals(fileId)).isPresent()) {
+                throw new StorageException("VFS path is held by another file: " + normalized);
+            }
+            String fileName = fileNameOf(normalized);
+            session.update("""
+                    update jdesk_vfs_files
+                    set root_id = ?, relative_path = ?, parent_path = ?, file_name = ?, file_name_sort = ?,
+                        content_version = content_version + 1, updated_at = ?
+                    where file_id = ?
+                    """, rootId.value(), normalized, parentPathOf(normalized), fileName,
+                    VfsFileNameSort.key(collator, fileName), now(), fileId.value());
+            return SqliteVfsCatalog.findFile(session, fileId)
+                    .orElseThrow(() -> new StorageException("VFS file disappeared after relocation: " + fileId.value()));
+        }
+
 
         @Override
         public Optional<VfsManagedFile> findFile(VfsFileId fileId) {

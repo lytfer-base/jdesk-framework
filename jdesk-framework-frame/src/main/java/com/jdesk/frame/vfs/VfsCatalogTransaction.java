@@ -19,6 +19,14 @@ public interface VfsCatalogTransaction {
     /** Changes only the catalog ID; the caller updates dependent rows in this transaction. */
     VfsManagedFile rekeyFile(VfsFileId fileId, VfsFileId newFileId);
 
+    /** Sets PRESENT and measured fields; only non-directory size/mtime changes advance version.
+     * Directories require zero size; null/empty native IDs preserve the old value; read-only is unchanged. */
+    VfsManagedFile applyObservation(VfsFileId fileId, long size, long modifiedAt, long fileCreatedAt, String nativeFileId);
+
+    /** Changes position and advances version, preserving observed fields; the same exact position is unchanged.
+     * Missing rows/roots and targets held by another ID throw StorageException, including MISSING targets. */
+    VfsManagedFile relocateFile(VfsFileId fileId, VfsRootId rootId, String relativePath);
+
     /** Reads the row, including uncommitted changes on this transaction. */
     Optional<VfsManagedFile> findFile(VfsFileId fileId);
 
