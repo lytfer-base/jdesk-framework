@@ -53,6 +53,33 @@ class DefaultManagedVfsServiceTest {
     }
 
     @Test
+    void openingVersionOneCatalogAddsTheNativeIdentityLookupIndex() {
+        PathManager.setHomePathForTests(homeDir);
+        DatabaseHandle database = openDatabase("vfs.service.native-index");
+        DefaultManagedVfsService service = new DefaultManagedVfsService();
+        try {
+            database.migrate(VfsCatalogSchema.NAMESPACE, VfsCatalogSchema.migrations().subList(0, 1));
+            assertFalse(usesNativeIdentityIndex(database));
+
+            service.openCatalog("native-index", DatabaseVfsCatalogBackend.of(database));
+
+            assertTrue(usesNativeIdentityIndex(database));
+            assertEquals(2, DatabaseVfsCatalogBackend.supportedVersions().get(VfsCatalogSchema.NAMESPACE));
+        } finally {
+            service.dispose();
+            Disposer.dispose(database);
+        }
+    }
+
+    private static boolean usesNativeIdentityIndex(DatabaseHandle database) {
+        return database.read(session -> session.queryList("""
+                explain query plan select file_id from jdesk_vfs_files
+                where root_id=? and native_file_id=? and directory=0 limit 2
+                """, row -> row.getString("detail"), "root", "native").stream().anyMatch(detail ->
+                detail.contains("idx_jdesk_vfs_files_root_native") && detail.contains("root_id=? AND native_file_id=?")));
+    }
+
+    @Test
     void opensCatalogFromDatabaseBackend() {
         PathManager.setHomePathForTests(homeDir);
         DatabaseHandle database = openDatabase("vfs.service.open");

@@ -23,7 +23,9 @@ final class VfsCatalogSchema {
         return List.of(DatabaseMigration.of(1, "vfs-snapshot-v01", session -> {
             createTables(session);
             createIndexes(session);
-        }));
+        }), DatabaseMigration.of(2, "vfs-native-identity-index", session -> session.update("""
+                create index idx_jdesk_vfs_files_root_native on jdesk_vfs_files(root_id, native_file_id)
+                """)));
     }
 
     private static void createTables(DatabaseSession session) {
