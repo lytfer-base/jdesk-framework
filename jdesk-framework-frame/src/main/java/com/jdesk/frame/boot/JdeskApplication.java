@@ -142,8 +142,8 @@ public final class JdeskApplication implements CoroutineApplication {
     }
 
     /**
-     * Shuts the application down, disposing the core, plugins and message bus; any lifecycle listener can veto it
-     * beforehand.
+     * Consults and saves on the calling thread, then disposes resources; EDT callers return before disposal finishes.
+     * Non-EDT callers retain synchronous shutdown. The application stays registered until cleanup completes.
      */
     @Override
     public void shutdown() {
@@ -176,6 +176,16 @@ public final class JdeskApplication implements CoroutineApplication {
 
         publishLifecycleEvent("onApplicationShuttingDown", listener -> listener.onApplicationShuttingDown(this));
 
+        if (SwingUtilities.isEventDispatchThread()) {
+            Thread exit = new Thread(() -> finishShutdown(mb, shutdownStartedAt), "jdesk-application-shutdown");
+            exit.setDaemon(false);
+            exit.start();
+        } else {
+            finishShutdown(mb, shutdownStartedAt);
+        }
+    }
+
+    private void finishShutdown(MessageBus mb, long shutdownStartedAt) {
         try {
             core.dispose();
         } catch (RuntimeException | Error e) {
